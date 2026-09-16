@@ -4,6 +4,7 @@
 
 Rust의 타입 시스템을 유지하면서, 매크로로 문법을 JS/JSX처럼 위장한
 초경량 순수 함수형 UI 라이브러리. (사양서: `prototype/prototypes/spec.md`)
+(구현 현황 · 미구현 목록: `prototype/prototypes/implementation-status.md`)
 
 ## 설치
 
