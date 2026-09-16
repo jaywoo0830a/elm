@@ -36,10 +36,33 @@
 //! 속성 매크로(`#[view]`) 대신 함수형 매크로 `view! { fn ... }`로 정의한다.
 
 mod element;
+pub mod platform;
+pub mod raw;
 pub mod runtime;
 pub mod style;
 mod state;
 pub mod testing;
+
+/// Register an effect mock on a mounted app (사양서 8.2 — `.mock()` 슈가).
+///
+/// ```ignore
+/// let mut app = elm_magic::mount!(Search);
+/// elm_magic::mock!(app, search_api, |q: String| vec![format!("hit:{}", q)]);
+/// ```
+///
+/// The parameter type annotations give the registry its downcast keys.
+#[macro_export]
+macro_rules! mock {
+    ($app:ident, $name:ident, |$a:ident : $ta:ty| $body:expr) => {
+        $app.set_mock1(stringify!($name), move |$a: $ta| $body)
+    };
+    ($app:ident, $name:ident, |$a:ident : $ta:ty, $b:ident : $tb:ty| $body:expr) => {
+        $app.set_mock2(stringify!($name), move |$a: $ta, $b: $tb| $body)
+    };
+    ($app:ident, $name:ident, |$a:ident : $ta:ty, $b:ident : $tb:ty, $c:ident : $tc:ty| $body:expr) => {
+        $app.set_mock3(stringify!($name), move |$a: $ta, $b: $tb, $c: $tc| $body)
+    };
+}
 
 pub use element::{Element, IntoElements};
 pub use state::{Arena, Ctx, State};
@@ -57,11 +80,26 @@ pub use elm_magic_macros::{css, ui, view};
 
 /// Mount a component headlessly (no renderer, no runtime) for tests.
 pub use testing::{mount, mount_with};
+pub use platform::{Headless, Platform};
+
+/// Entry point (사양서 7.1): the platform is an argument, the component
+/// never knows it.
+pub fn run<P: platform::Platform, C: Component>(
+    platform: P,
+    component: C,
+) -> P::Session<C>
+where
+    C::Props: Default,
+{
+    platform.run(component)
+}
 
 pub mod prelude {
     pub use crate::element::{Element, IntoElements};
     pub use crate::state::{Arena, Ctx, State};
     pub use crate::testing::{mount, mount_with, TestApp};
+    pub use crate::platform::{Headless, Platform};
+    pub use crate::run;
     pub use crate::Component;
     pub use crate::style;
     pub use elm_magic_macros::{css, ui, view};

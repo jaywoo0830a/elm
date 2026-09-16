@@ -36,6 +36,13 @@ pub enum Element {
         on_change: Option<ValueHandler>,
         on_enter: Option<ValueHandler>,
     },
+    /// `<Raw>|ui: &mut PlatformType| { ... }</Raw>` — the escape hatch
+    /// (사양서 7.3). Opaque to headless testing; the platform adapter
+    /// invokes it with its own handle (e.g. `&mut egui::Ui`).
+    Raw {
+        class: Vec<String>,
+        widget: crate::raw::RawFn,
+    },
 }
 
 impl Element {
@@ -45,7 +52,8 @@ impl Element {
             | Element::Col { class, .. }
             | Element::Row { class, .. }
             | Element::Button { class, .. }
-            | Element::Input { class, .. } => class,
+            | Element::Input { class, .. }
+            | Element::Raw { class, .. } => class,
         }
     }
 }

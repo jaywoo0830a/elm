@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/elm-magic-macros"]
+members = ["crates/elm-magic-macros", "crates/elm-magic-egui"]
 
 [package]
 name = "elm-magic"

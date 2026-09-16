@@ -8,6 +8,9 @@ use std::rc::Rc;
 /// A deferred effect continuation: runs with the arena once its future resolves.
 pub type PendingEffect = Box<dyn FnOnce(&mut Arena)>;
 
+/// A live stream task: pumps one value; returns false when exhausted.
+pub type StreamTask = Box<dyn FnMut(&mut Arena) -> bool>;
+
 /// Keyboard handler registered by `on_key` (사양서 5.3).
 pub type KeyHandler = Rc<dyn Fn(&mut Arena)>;
 
@@ -17,6 +20,8 @@ pub struct Arena {
     slots: Vec<Option<Box<dyn Any>>>,
     /// Effects spawned by `<-` — run by `flush()` (사양서 12: Cmd는 flush 전까지 실행 안 됨).
     pending: Vec<PendingEffect>,
+    /// Live streams registered by `->` — pumped by `pump()` (사양서 5.4).
+    streams: Vec<StreamTask>,
 }
 
 impl Arena {
@@ -85,6 +90,39 @@ impl Arena {
     /// Take all pending effects (used by `flush`).
     pub fn take_pending(&mut self) -> Vec<PendingEffect> {
         std::mem::take(&mut self.pending)
+    }
+
+    /// Register a stream: each yielded value runs the continuation with the
+    /// arena (사양서 5.4 — 스트림을 슬롯에 반영).
+    pub fn spawn_stream<I, G>(&mut self, iter: I, mut k: G)
+    where
+        I: Iterator + 'static,
+        I::Item: 'static,
+        G: FnMut(&mut Arena, I::Item) + 'static,
+    {
+        let mut it = iter;
+        self.streams.push(Box::new(move |arena| match it.next() {
+            Some(v) => {
+                k(arena, v);
+                true
+            }
+            None => false,
+        }));
+    }
+
+    /// Number of live stream tasks.
+    pub fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
+    /// Take all live stream tasks (used by `pump`).
+    pub fn take_streams(&mut self) -> Vec<StreamTask> {
+        std::mem::take(&mut self.streams)
+    }
+
+    /// Put stream tasks back (survivors of a pump round).
+    pub fn push_streams(&mut self, tasks: Vec<StreamTask>) {
+        self.streams.extend(tasks);
     }
 }
 

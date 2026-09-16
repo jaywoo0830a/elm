@@ -426,6 +426,36 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
 
 // ── events ──────────────────────────────────────────────────
 
+/// Find the next top-level `->` stream arrow at or after `from`, stopping at
+/// `;`. Returns the index of the `-` token, or None. Only fires when the
+/// arrow is followed by a state slot and a brace body.
+fn find_stream_arrow(toks: &[TokenTree], from: usize, env: &Env) -> Option<usize> {
+    let mut k = from;
+    while k < toks.len() {
+        match &toks[k] {
+            TokenTree::Punct(p) if p.as_char() == ';' => return None,
+            TokenTree::Punct(p) if p.as_char() == '-' && p.spacing() == Spacing::Joint => {
+                if let (
+                    Some(TokenTree::Punct(gt)),
+                    Some(TokenTree::Ident(target)),
+                    Some(TokenTree::Group(body)),
+                ) = (toks.get(k + 1), toks.get(k + 2), toks.get(k + 3))
+                {
+                    if gt.as_char() == '>'
+                        && body.delimiter() == Delimiter::Brace
+                        && env.states.contains(&target.to_string())
+                    {
+                        return Some(k);
+                    }
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    None
+}
+
 /// Try to parse an effect `a, b <- expr` starting at `i`.
 /// Returns (targets, index of RHS start) if present.
 fn try_parse_effect(toks: &[TokenTree], i: usize, env: &Env) -> Option<(Vec<String>, usize)> {
@@ -464,6 +494,42 @@ fn transform_event(toks: &[TokenTree], env: &Env, value_binding: Option<&str>) -
     let mut out: Vec<TokenTree> = Vec::new();
     let mut i = 0;
     while i < toks.len() {
+        // stream? `expr -> slot { body }` (사양서 5.4) — detected before the
+        // LHS is processed so the expression is not emitted twice.
+        if let Some(j) = find_stream_arrow(toks, i, env) {
+            let lhs: Vec<TokenTree> = toks[i..j].to_vec();
+            let lhs_ts = transform_event_read(&lhs, env, value_binding).to_string();
+            let tname = match &toks[j + 2] {
+                TokenTree::Ident(t) => t.to_string(),
+                _ => unreachable!(),
+            };
+            let body_toks: Vec<TokenTree> = match &toks[j + 3] {
+                TokenTree::Group(g) => g.stream().into_iter().collect(),
+                _ => unreachable!(),
+            };
+            let body_ts = transform_event(&body_toks, env, None).to_string();
+            let emitted = format!(
+                "{{ \
+                let __elm_iter = ::std::iter::IntoIterator::into_iter({}); \
+                _elm_a.spawn_stream(__elm_iter, move |_elm_a: &mut ::elm_magic::Arena, __elm_v| {{ \
+                    __elm_state_{}.set(_elm_a, __elm_v); \
+                    {} \
+                }}); \
+                }}",
+                lhs_ts, tname, body_ts
+            );
+            out.extend(parse_ts(&emitted));
+            i = j + 4;
+            if i < toks.len() {
+                if let TokenTree::Punct(sp) = &toks[i] {
+                    if sp.as_char() == ';' {
+                        out.push(punct(';'));
+                        i += 1;
+                    }
+                }
+            }
+            continue;
+        }
         if let TokenTree::Ident(id) = &toks[i] {
             let name = id.to_string();
             if name == "_" {
@@ -483,6 +549,60 @@ fn transform_event(toks: &[TokenTree], env: &Env, value_binding: Option<&str>) -
                         .unwrap_or(toks.len());
                     let rhs: Vec<TokenTree> = toks[rhs_start..rhs_end].to_vec();
                     let rhs_ts = transform_event_read(&rhs, env, value_binding).to_string();
+                    // simple call `f(a, b)` → dispatch through the mock
+                    // registry (사양서 8.2); other RHS forms run as-is
+                    let fut_expr = match rhs.as_slice() {
+                        [TokenTree::Ident(f), TokenTree::Group(g)]
+                            if g.delimiter() == Delimiter::Parenthesis
+                                && !env.states.contains(&f.to_string()) =>
+                        {
+                            let args: Vec<TokenTree> = g.stream().into_iter().collect();
+                            let mut parts: Vec<Vec<TokenTree>> = vec![Vec::new()];
+                            for t in args {
+                                if matches!(&t, TokenTree::Punct(p) if p.as_char() == ',') {
+                                    parts.push(Vec::new());
+                                } else {
+                                    parts.last_mut().unwrap().push(t);
+                                }
+                            }
+                            let parts: Vec<Vec<TokenTree>> = parts
+                                .into_iter()
+                                .filter(|p| !p.is_empty())
+                                .collect();
+                            let n = parts.len();
+                            let args_ts: Vec<String> = parts
+                                .iter()
+                                .map(|p| {
+                                    transform_event_read(p, env, value_binding).to_string()
+                                })
+                                .collect();
+                            let args_list = args_ts.join(", ");
+                            let real_call = format!("{}({})", f, args_list);
+                            let tuple = match n {
+                                0 => "()".to_string(),
+                                1 => format!("({},)", args_list),
+                                _ => format!("({})", args_list),
+                            };
+                            let any_args = (0..n)
+                                .map(|k| {
+                                    format!(
+                                        "&__elm_args.{} as &dyn ::std::any::Any",
+                                        k
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!(
+                                "{{ \
+                                let __elm_args = {}; \
+                                ::elm_magic::runtime::maybe_mock({:?}, {}, \
+                                    move || ::elm_magic::runtime::call_mock({:?}, ::std::vec![{}])) \
+                                }}",
+                                tuple, f.to_string(), real_call, f.to_string(), any_args
+                            )
+                        }
+                        _ => format!("({})", rhs_ts),
+                    };
                     let mut sets = String::new();
                     for (n, t) in targets.iter().enumerate() {
                         let out = if targets.len() == 1 {
@@ -497,12 +617,12 @@ fn transform_event(toks: &[TokenTree], env: &Env, value_binding: Option<&str>) -
                     }
                     let emitted = format!(
                         "{{ \
-                        let __elm_fut = ({}); \
+                        let __elm_fut = {}; \
                         _elm_a.spawn(__elm_fut, move |__elm_a2: &mut ::elm_magic::Arena, __elm_out| {{ \
                             {} \
                         }}); \
                         }}",
-                        rhs_ts, sets
+                        fut_expr, sets
                     );
                     out.extend(parse_ts(&emitted));
                     i = rhs_end;
@@ -752,6 +872,29 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
         TokenTree::Ident(id) => id.to_string(),
         _ => panic!("elm-magic: expected tag name after `<`"),
     };
+    // `<Raw>|ui: &mut T| { ... }</Raw>` — no attributes; the children are a
+    // user closure captured verbatim (사양서 7.3). `<Raw>` may or may not
+    // carry the closing `>` of the open tag.
+    if tag == "Raw" {
+        let mut children_start = start + 2;
+        if matches!(toks.get(children_start), Some(TokenTree::Punct(p)) if p.as_char() == '>') {
+            children_start += 1;
+        }
+        let mut j = children_start;
+        while j < toks.len() {
+            if let TokenTree::Punct(p) = &toks[j] {
+                if p.as_char() == '<'
+                    && matches!(toks.get(j + 1), Some(TokenTree::Punct(pp)) if pp.as_char() == '/')
+                    && matches!(toks.get(j + 2), Some(TokenTree::Ident(id)) if id.to_string() == "Raw")
+                    && matches!(toks.get(j + 3), Some(TokenTree::Punct(gt)) if gt.as_char() == '>')
+                {
+                    return (emit_raw(&toks[children_start..j]), j + 4);
+                }
+            }
+            j += 1;
+        }
+        panic!("elm-magic: unclosed tag `<Raw>`");
+    }
     let mut i = start + 2;
     let mut attrs: Vec<(String, AttrVal)> = Vec::new();
     let mut self_closing = false;
@@ -993,9 +1136,43 @@ fn emit_element(
                 event_closure(attrs, "on_enter", Some("::std::string::String")),
             )
         }
+        "Raw" => unreachable!("`<Raw>` is handled by emit_raw in parse_element"),
         other => return emit_component(other, attrs, children, env),
     };
     code.parse().expect("elm-magic internal: bad element code")
+}
+
+/// `<Raw>|ui: &mut T| { ... }</Raw>` → `Element::Raw` wrapping the user's
+/// closure verbatim, downcast by `raw::call_raw` at invocation time.
+fn emit_raw(children: &[TokenTree]) -> TokenStream {
+    if children.is_empty() {
+        panic!("elm-magic: <Raw> expects a closure: <Raw>|ui: &mut T| {{ ... }}</Raw>");
+    }
+    let template = parse_ts(
+        "::elm_magic::Element::Raw { class: ::std::vec![], widget: \
+         ::std::rc::Rc::new(move |__elm_payload: &mut dyn ::std::any::Any| \
+         ::elm_magic::raw::call_raw(__elm_payload, __elm_user_closure)) }",
+    );
+    let result = substitute_ident(
+        template,
+        "__elm_user_closure",
+        children.iter().cloned().collect(),
+    );
+    result
+}
+
+/// Replace every occurrence of an ident with the given token stream.
+fn substitute_ident(ts: TokenStream, name: &str, replacement: TokenStream) -> TokenStream {
+    ts.into_iter()
+        .flat_map(|t| match t {
+            TokenTree::Ident(ref id) if id.to_string() == name => replacement.clone(),
+            TokenTree::Group(g) => {
+                let inner = substitute_ident(g.stream(), name, replacement.clone());
+                TokenStream::from(TokenTree::Group(Group::new(g.delimiter(), inner)))
+            }
+            other => TokenStream::from(other),
+        })
+        .collect()
 }
 
 fn emit_component(

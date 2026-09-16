@@ -69,6 +69,47 @@ impl<C: Component> TestApp<C> {
         self.rerender();
     }
 
+    /// Pump one value from each live stream and re-render (사양서 5.4).
+    /// Exhausted streams are dropped.
+    pub fn pump(&mut self) {
+        let tasks = self.ctx.arena.take_streams();
+        let mut keep = Vec::new();
+        for mut task in tasks {
+            if task(&mut self.ctx.arena) {
+                keep.push(task);
+            }
+        }
+        self.ctx.arena.push_streams(keep);
+        self.rerender();
+    }
+
+    /// Register a 1-arg effect mock (use `mock!(app, f, |a: T| ...)`).
+    pub fn set_mock1<A: Clone + 'static, Out: 'static>(
+        &self,
+        name: &str,
+        f: impl Fn(A) -> Out + 'static,
+    ) {
+        crate::runtime::set_mock1(name, f);
+    }
+
+    /// Register a 2-arg effect mock.
+    pub fn set_mock2<A0: Clone + 'static, A1: Clone + 'static, Out: 'static>(
+        &self,
+        name: &str,
+        f: impl Fn(A0, A1) -> Out + 'static,
+    ) {
+        crate::runtime::set_mock2(name, f);
+    }
+
+    /// Register a 3-arg effect mock.
+    pub fn set_mock3<A0: Clone + 'static, A1: Clone + 'static, A2: Clone + 'static, Out: 'static>(
+        &self,
+        name: &str,
+        f: impl Fn(A0, A1, A2) -> Out + 'static,
+    ) {
+        crate::runtime::set_mock3(name, f);
+    }
+
     /// Click the first Button whose text matches.
     pub fn click(&mut self, text: &str) {
         let handler = find_button(&self.tree, text)
@@ -94,6 +135,17 @@ impl<C: Component> TestApp<C> {
             h(&mut self.ctx.arena, value);
         }
         self.rerender();
+    }
+
+    /// Re-render the tree (platform loops / adapters call this after
+    /// handlers mutate the arena).
+    pub fn refresh(&mut self) {
+        self.rerender();
+    }
+
+    /// The current element tree (for platform adapters / assertions).
+    pub fn element(&self) -> &Element {
+        &self.tree
     }
 
     /// All visible text, one node per line.
@@ -128,6 +180,11 @@ use std::rc::Rc;
 
 type H = Option<Rc<dyn Fn(&mut crate::state::Arena)>>;
 type VH = Option<Rc<dyn Fn(&mut crate::state::Arena, String)>>;
+
+/// Public helper: find a Button's on_click by text (used by tests/adapters).
+pub fn find_button_text(el: &Element, text: &str) -> Option<H> {
+    find_button(el, text)
+}
 
 fn find_button(el: &Element, text: &str) -> Option<H> {
     match el {
@@ -171,6 +228,8 @@ fn collect_text(el: &Element, out: &mut Vec<String>) {
         Text { text, .. } => out.push(text.clone()),
         Button { text, .. } => out.push(text.clone()),
         Input { value, .. } => out.push(format!("[input: {}]", value)),
+        // `<Raw>` is ignored headless (사양서 7.3)
+        Raw { .. } => {}
         Col { children, .. } | Row { children, .. } => {
             for c in children {
                 collect_text(c, out);
@@ -201,6 +260,9 @@ fn dump(el: &Element, depth: usize, out: &mut String) {
                 value,
                 fmt_class(class)
             ));
+        }
+        Raw { class, .. } => {
+            out.push_str(&format!("{}[raw]{}\n", pad, fmt_class(class)));
         }
         Col { children, class, .. } => {
             out.push_str(&format!("{}Col{}\n", pad, fmt_class(class)));

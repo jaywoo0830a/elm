@@ -1,0 +1,8 @@
+[package]
+name = "elm-magic-egui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+elm-magic = { path = "../.." }
+egui = "0.36"
