@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 작성 시점 기준 `git status` clean, 워크스페이스 테스트 **36개 통과**.
+> 최초 작성: `git status` clean · 테스트 36개 통과 → **v0.4 반영 후 워크스페이스 테스트 64개 통과**
 
 ---
 
@@ -43,7 +43,61 @@ rustc --edition 2021 --test --emit=metadata \
 | 효과 | `a, b <- f(…)`, 스트림 `expr -> slot { … }` + `pump()`, `on_mount`, `on_key("Ctrl+S")`, `on_tick(정수)`, `on_change(x) after 정수` | `tests/{effects,stream,lifecycle}.rs` |
 | 스타일 | `css!` 등록/조회(`style::register` / `style::lookup`) | `src/style.rs`, `tests/css.rs` |
 | 테스트 | `flush` / `advance` / `pump` / `press_key` / `press_enter` / `type_` / `click` / `expect_text` / `text` / `render_tree`, `set_mock1..3` | `src/testing.rs` |
-| 플랫폼 | `run(Headless, C) -> TestApp`, egui 어댑터 crate(`render(ui, &tree, &mut arena) -> Pass`, 6태그, `<Raw>` 실제 호출) | `src/platform.rs`, `crates/elm-magic-egui/{src,tests}/` |
+| 플랫폼 | `run(Headless, C) -> TestApp`, egui 어댑터 crate(`render(ui, &tree, &mut arena) -> Pass`, 17태그, `<Raw>` 실제 호출) | `src/platform.rs`, `crates/elm-magic-egui/{src,tests}/` |
+
+---
+
+## 2.5 v0.4 — 구현 완료 10건 ✅
+
+우선순위 상위 10개(버그 7 + 기능 3)를 구현했다. `cargo test --workspace` = **64개 통과**,
+`tests/{syntax,timers,widgets,sugar}.rs`가 각 항목의 회귀 테스트다.
+
+| # | 항목 | 상태 | 구현 위치 / 사용법 |
+|---|---|---|---|
+| 1 | **시간 리터럴** `16ms` `300ms` `5min` `2s` | ✅ | `jsx.rs::duration_expr` — `on_tick(500ms)`, `on_change(x) after 300ms`, `<- f() after 1min` |
+| 2 | `..` 범위 뒤 상태 읽기 | ✅ | `jsx.rs::is_field_access` — `{(0..n).map(\|i\| …)}` |
+| 3 | 이벤트 본문 상태 메서드(0-인자/반환값 무시/조건문 오인) | ✅ | `jsx.rs::Level`(Stmt/Expr) + `stmt_position` — `submit(name.clone(), email.clone())`, `if user.is_empty()`, `items.remove(0)` |
+| 4 | 컴마 다중문 | ✅ | `jsx.rs::stmt_end` — `on_click={a = 1, b = 2}` |
+| 5 | 구조체 리터럴 축약 | ✅ | `jsx.rs::shorthand_group`(중괄호 유지 + 경로 판정) — `items.push(Note { body })` |
+| 6 | **`{if}` / `{match}` 분기 타입 통일** | ✅ | `jsx.rs::{unify_if,unify_match}` + `element::IntoElements`(IntoIterator blanket) + `Element::Fragment` / `IntoElement` — `{if loading {<Spinner/>} else {items.map(…)}}` |
+| 7 | **리스트 아이템 이벤트 캡처(E0716)** | ✅ | `.map(…)`/`.iter()` sugar가 **소유 반복**(`into_iter`)으로 전개 — `items.map(\|t\| <Button on_click={sel = t.clone()}>)` |
+| 8 | `after` 없는 `on_change` + `<- … after <dur>` | ✅ | `jsx.rs` on_change(선택적 `after`) + `Arena::spawn_after` / `take_due` / `TestApp::advance`(가상 시계), `has_pending_after()` |
+| 9 | **빌트인 태그 11종 + children** | ✅ | `Spinner`, `Divider`, `Strong`, `Banner`, `Check`, `TextArea`, `Tab`, `Th`, `Td`, `Progress`, `Modal`(자식 보유) + `Element::Fragment` |
+| 10 | 테스트 슈가 | ✅ | `.mock(fn, impl)` / `.mock2` / `.mock3`(함수명 자동 추출), `assert_text` / `assert_visible` / `assert_hidden`, `type_into(selector, value)`, `toggle(label)` / `set_check(label, v)` |
+
+### 새로 생긴 규칙 (문서화 필요)
+
+| 규칙 | 이유 |
+|---|---|
+| `on_change(x)`의 `x`는 `Clone + PartialEq`여야 한다 | 값이 바뀌었는지 비교해서 본문을 실행한다 (`on_change(state)` 파생/미러 상태) |
+| `{_}`는 **값 이벤트**(`on_change`/`on_enter`)에서만 | `on_click` 등에는 전달되는 값이 없다 — 이제 `elm-magic: `_`는 on_change/on_enter …` 라는 명확한 컴파일 에러를 낸다 |
+| `state.remove(정수)` = 인덱스 삭제, `state.remove(그 밖)` = **값으로 삭제** | 사양서 3.3의 `items.remove(t)`를 지원하기 위한 구분 (값 삭제는 `PartialEq` 필요) |
+| `items.iter()` / `items.map(…)`는 **소유 반복** | `&T`를 `'static` 핸들러에 캡처할 수 없어서 (E0716) 사양서 3.3의 "`&` 생략"을 그대로 구현 |
+| 뷰 본문/분기의 값이 `Vec<Element>`면 `Fragment`로 감싼다 | `fn App() { {if ..} }`처럼 본문 전체가 조건부일 때 |
+
+### 여전히 미구현 (이번 범위 밖)
+
+`#[store]` 전역 상태, `on_message`/`on_event`/`on_unmount`/`on_navigate` 구독, keyed 트리·가상화,
+콜백 prop(`on_select: fn(Id)`), `#[view]` 속성 매크로, 소문자/HTML 태그(`<h1>`), `<Table>`/`<Plot>`/`<Dock>`/`<Window>` 등,
+`Desktop`/`Web`/`Terminal` 플랫폼, `memo!`, i18n, 스트림 목, 클로저 내부 `<-`, `mount(엘리먼트)`.
+
+### 남은 두 가지 리스트 제약 (다음 마일스톤 1순위)
+
+| 제약 | 증상 | 우회/대안 |
+|---|---|---|
+| **아이템 필드 대입** `on_change={t.done = !t.done}` | `E0594` (아이템은 값 복사본) | `items` 쪽 메서드를 만든다: `<Check checked={t.done} on_change={items.toggle(&t)}>` — 근본 해결은 인덱스 추적(아이템 → `items[i]` 대입 전개) |
+| **한 행에 아이템 캡처 핸들러 2개 이상** | `E0382`/`E0502` (`move` 캡처 충돌) | 핸들러는 아이템당 하나, 나머지는 읽기로 — 근본 해결은 아이템을 `Rc`로 바인딩해 핸들러마다 `Rc::clone` |
+
+디버깅 팁: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` 전개 코드를 덤프할 수 있다
+(`crates/elm-magic-macros/src/view.rs`).
+
+### 재측정 (v0.4)
+
+| 항목 | 이전 | v0.4 |
+|---|---|---|
+| 워크스페이스 테스트 | 36 | **64** |
+| `/tmp/elmchk` 스니펫 통과 | 11 / 58 | **41 / 65** |
+| `1.rs` 패턴 2/4/5/12/13 스모크 | 컴파일 불가 | **컴파일·동작** (`final_spec.rs`)
 
 ---
 
@@ -51,38 +105,42 @@ rustc --edition 2021 --test --emit=metadata \
 
 ### 3.1 매크로/문법 — 컴파일이 아예 안 되는 것 (전부 검증됨)
 
-| # | 미구현 항목 | 대표 스니펫 | 실제 에러 | 원인 위치 |
+> v0.4에서 **1~6, 10, 12, 14는 수정됨**(2.5절 참고). 아래는 당시 진단 기록이며,
+> ✅ 표시된 행은 이제 동작한다.
+
+| # | 미구현 항목 | 대표 스니펫 | 당시 에러 | 원인 위치 |
 |---|---|---|---|---|
-| 1 | **시간 리터럴 `ms` / `min`** | `on_tick(16ms)`, `on_change(q) after 300ms`, `<- f() after 5min` | `invalid suffix 'msu64' for number literal` | `jsx.rs` — `{}u64`로 접미사 결합. **정수만 가능** |
-| 2 | `..` 범위 뒤 상태 읽기 | `{(0..n).map(…)` | `cannot find value 'n'` | `jsx.rs:391` `prev_dot`이 `..`에서 켜짐 |
-| 3 | 이벤트 본문에서 상태 메서드 **0-인자** 호출 | `on_click={submit(name.clone(), email.clone())}`, `if user.is_empty()` | `expected expression, found ';'` | `jsx.rs:682-713` — `n_args==0`이면 `let __elm_args = ;` |
-| 4 | 이벤트 메서드 호출의 반환형 제약 / 요소 삭제 | `on_click={items.remove(t)}`, `items.remove(0)` | `E0308` (Vec::remove는 값 반환·인덱스 기반) | 사양서의 "값으로 삭제" API 없음 |
-| 5 | 리스트 아이템을 이벤트에서 캡처 | `items.map(\|t\| <Button on_click={sel = t.clone()}>` | `E0716` temporary dropped while borrowed | `.clone().iter()`가 낸 `&T`를 `'static Rc`로 캡처 |
-| 6 | 구조체 리터럴 축약 | `items.push(Todo { text })` | `expected ',', found 'text'` | `jsx.rs:723-738` — 중괄호를 통째로 치환해 `Todo text: (…)` 생성 |
-| 7 | 컴포넌트 children | `<Modal><Text/></Modal>`, `<Tab …>"Home"</Tab>`, `<Window>…</Window>` | `proc macro panicked` ("cannot have children") | `jsx.rs:1190` |
+| 1 | **시간 리터럴 `ms` / `min`** | `on_tick(16ms)`, `on_change(q) after 300ms`, `<- f() after 5min` | `invalid suffix 'msu64' for number literal` | ✅ v0.4 — `duration_expr` |
+| 2 | `..` 범위 뒤 상태 읽기 | `{(0..n).map(…)` | `cannot find value 'n'` | ✅ v0.4 — `is_field_access` |
+| 3 | 이벤트 본문에서 상태 메서드 **0-인자** 호출 | `on_click={submit(name.clone(), email.clone())}`, `if user.is_empty()` | `expected expression, found ';'` | ✅ v0.4 — `Level::Stmt/Expr` |
+| 4 | 이벤트 메서드 호출의 반환형 제약 / 요소 삭제 | `on_click={items.remove(t)}`, `items.remove(0)` | `E0308` (Vec::remove는 값 반환·인덱스 기반) | ✅ v0.4 — 반환값 무시 + `retain` sugar |
+| 5 | 리스트 아이템을 이벤트에서 캡처 | `items.map(\|t\| <Button on_click={sel = t.clone()}>` | `E0716` temporary dropped while borrowed | ✅ v0.4 — 소유 반복 |
+| 6 | 구조체 리터럴 축약 | `items.push(Todo { text })` | `expected ',', found 'text'` | ✅ v0.4 — `shorthand_group` |
+| 7 | 컴포넌트 children(사용자 컴포넌트) | `<Item on_click={…}>"New"</Item>`, `<Window>…</Window>` | `proc macro panicked` ("cannot have children") | ❌ **빌트인은 가능**(`<Modal>` 등) — 사용자 컴포넌트는 아직 |
 | 8 | 콜백 prop(함수 타입) | `fn ItemRow(item: Item, on_select: fn(Id))` | panic `must have a default value` | `view.rs:166` |
-| 9 | 소문자/HTML 태그 | `<h1>`, `<h2>` | panic `unknown tag` | `jsx.rs:1184` |
-| 10 | 컴마 다중문 | `on_click={sort = Name, dir = dir.toggle()}` | `E0070` / `E0308` | 문장 구분은 `;`만 |
-| 11 | `{_}`를 클릭류 이벤트에 사용 | `on_click={selected = Some(_)}`, `on_drop={cols.move_to(_, c)}` | `cannot find value '_elm_v'` | `jsx.rs:914-925` — 값 이벤트(on_change/on_enter)에만 바인딩 |
-| 12 | `after` 없는 `on_change` | `on_change(state) { … }` (시간여행) | panic | `jsx.rs:187-255` |
+| 9 | 소문자/HTML 태그 | `<h1>`, `<h2>` | panic `unknown tag` | `jsx.rs` |
+| 10 | 컴마 다중문 | `on_click={sort = Name, dir = dir.toggle()}` | `E0070` / `E0308` | ✅ v0.4 — `stmt_end` |
+| 11 | `{_}`를 클릭류 이벤트에 사용 | `on_click={selected = Some(_)}` | `cannot find value '_elm_v'` | ⚠️ v0.4 — 이제 **명확한 에러**만 (콜백 prop이 생기면 해결) |
+| 12 | `after` 없는 `on_change` | `on_change(state) { … }` (시간여행) | panic | ✅ v0.4 (`Clone + PartialEq` 필요) |
 | 13 | 클로저 내부 효과 | `let start = \|\| { … <- f() };` | `unexpected token '<-'` | 효과는 문장 위치만 |
-| 14 | if/else 분기 타입 혼합 | `{if loading {<Spinner/>} else {users.map(…)}}` | `E0308` (Element vs iterator) | 사양서 3.4의 `IntoElements` 통일 미구현 |
+| 14 | if/else 분기 타입 혼합 | `{if loading {<Spinner/>} else {users.map(…)}}` | `E0308` (Element vs iterator) | ✅ v0.4 — 분기 통일 |
 | 15 | `#[view]` 속성 매크로 | `#[view] fn Counter(n = 0)` | rustc 파싱 단계에서 실패 (`=` 발견) | 비-Rust 문법 → 함수형 `view! { }`만 |
-| 16 | 키워드 속성명 | `<Fade in={visible} duration={200}>` | panic | `in`이 키워드 |
+| 16 | 키워드 속성명 | `<Fade in={visible} duration={200}>` | panic | `in`이 키워드 (`<Fade>` 자체도 미구현) |
 
-### 3.2 태그 어휘 — 내장은 6개뿐
+### 3.2 태그 어휘 — 내장 17개
 
-- **구현:** `Col`, `Row`, `Text`, `Button`, `Input`, `Raw`
+- **구현:** `Col`, `Row`, `Fragment`(묶음), `Text`, `Strong`, `Button`, `Input`, `TextArea`, `Check`,
+  `Tab`, `Th`, `Td`, `Banner`, `Spinner`, `Divider`, `Progress`, `Modal`(children), `Raw`
 - **미구현(프로토타입에 등장):**
 
   | 파일 | 미구현 태그 |
   |---|---|
-  | `1.rs` | `Divider`, `Strong`, `Spinner`, `Banner`, `Check`, `Modal`, `Tab`, `Th`, `Td`, `Table`, `TextArea`, `DropZone`, `Card`, `Fade`, `ErrorBoundary`, `Theme`, `Layout`, `Sidebar`, `Main` |
-  | `2.rs` | `Sidebar`, `Center`, `TopBar`, `BottomBar`, `NavMenu`, `MenuBar`, `Menu`, `Item`, `Sep`, `Dock`, `Scroll`, `Collapsing`, `Switch`, `Slider`, `Plot`, `Line`, `Points`, `HLine`, `Candlestick`, `Volume`, `Table(virtualized)`, `Column`, `Image`, `DragValue`, `Gradient`, `FileTree`, `Window`, `Progress` |
-  | `3.rs` | `VirtualList`, `PostCard`, `Skeleton`, `UserCard`, `SplitPane`, `Kbd`, `DevToolbar`, `Status`, `ChatBubble`, `Check` |
+  | `1.rs` | `Table`, `DropZone`, `Card`, `Fade`, `ErrorBoundary`, `Theme`, `Layout`, `Sidebar`, `Main` — ~~Divider/Strong/Spinner/Banner/Check/Modal/Tab/Th/Td/TextArea~~ ✅ v0.4 |
+  | `2.rs` | `Sidebar`, `Center`, `TopBar`, `BottomBar`, `NavMenu`, `MenuBar`, `Menu`, `Item`, `Sep`, `Dock`, `Scroll`, `Collapsing`, `Switch`, `Slider`, `Plot`, `Line`, `Points`, `HLine`, `Candlestick`, `Volume`, `Table(virtualized)`, `Column`, `Image`, `DragValue`, `Gradient`, `FileTree`, `Window` — ~~Progress~~ ✅ v0.4 |
+  | `3.rs` | `VirtualList`, `PostCard`, `Skeleton`, `UserCard`, `SplitPane`, `Kbd`, `DevToolbar`, `Status`, `ChatBubble` — ~~Check~~ ✅ v0.4 |
 
-- **속성이 조용히 버려지는 것**(오류 없음 → 더 위험): `<Row key={…}>`, `<Text strike={…}>`, `auto_focus`, `role`, `draggable`, `active`, `highlight`, `accept`
-  → keyed diffing / a11y / 조건부 스타일 prop 미구현.
+- **속성이 조용히 버려지는 것**(오류 없음 → 더 위험): `<Row key={…}>`, `<Text strike={…}>`, `auto_focus`, `role`, `draggable`, `highlight`, `accept`
+  → keyed diffing / a11y / 조건부 스타일 prop 미구현. (`active`/`checked`는 v0.4에서 `<Tab>`/`<Check>` prop으로 구현됨)
 
 ### 3.3 상태 모델
 
@@ -109,7 +167,8 @@ rustc --edition 2021 --test --emit=metadata \
 | 구분 | 항목 |
 |---|---|
 | ✅ 구현 | `mount!`, `mount_with`, `flush`, `advance(ms)`, `pump`, `press_key`, `press_enter`, `type_(값)`, `click(라벨)`, `expect_text`, `text`, `render_tree`, `set_mock1..3` |
-| ❌ 미구현 | `.mock(fn, impl)` 메서드 체인, `.assert_text` / `.assert_visible` / `.assert_hidden`, `type_("input", "rust")`(셀렉터 기반), `advance(300ms)`, `Cart(items: vec![…])` 생성자 슈가, `mount(ui! { <Counter /> })`(**엘리먼트 마운트** — `mount`는 `Component` 타입만), `insta` 스냅샷(사양서 8.3 형태), 시간여행 |
+| ✅ v0.4 | `.mock(fn, impl)` / `.mock2` / `.mock3` (소유 빌더), `assert_text` / `assert_visible` / `assert_hidden`, `type_into(셀렉터, 값)` — 셀렉터는 태그명(`input`/`textarea`) 또는 클래스명, `toggle(label)` / `set_check(label, v)`, `has_pending_after()` |
+| ❌ 미구현 | 2인자 `type_(셀렉터, 값)`(오버로드 불가 → `type_into` 사용), `advance(300ms)`(리터럴 불가 → `advance(300)`), `Cart(items: vec![…])` 생성자 슈가, `mount(ui! { <Counter /> })`(헤드리스 엘리먼트 마운트), `insta` 스냅샷, 시간여행 |
 
 ### 3.6 플랫폼 / 어댑터
 
@@ -194,15 +253,19 @@ rustc --edition 2021 --test --emit=metadata \
 
 ## 5. 다음 작업 우선순위 제안
 
+> v0.4에서 **1~4, 7**을 구현했다(2.5절). 남은 순위는 아래 5·6번 항목이다.
+
 | 순위 | 작업 | 이유 |
 |---|---|---|
-| 1 | **매크로 버그 픽스(3.1절 1~4, 6, 10, 11, 12, 14)** — `..` 뒤 상태 치환, 이벤트 0-인자 메서드, 구조체 축약 중괄호, 컴마 문장 구분, 클릭류 `{_}`, `after` 선택화, 이벤트 메서드 반환값 무시, `if/else` 분기 `IntoElements` 통일 | 전부 매크로 코드 몇 줄 수준. `1.rs`의 다수 패턴과 사양서 3.3/3.4가 한 번에 살아남 |
-| 2 | **시간 리터럴(`16ms`, `300ms`, `5min`)** 파서 + `<- … after <dur>` | 프로토타입 전반에 깔린 표기. 없으면 문서 예제가 그대로 안 돌아감 |
-| 3 | **이벤트에서 리스트 아이템 캡처(3.1절 5)** — `Vec<Element>` 평탄화 시 `'static` 요구 제거(키/인덱스 기반 디스패치 또는 `Rc` 공유 값) | "리스트 + 행별 핸들러"는 UI의 최소 단위 기능 |
-| 4 | **태그 어휘 1차 확장 + 컴포넌트 children** — `Spinner, Banner, Check, Modal, Divider, Strong, TextArea, Tab, Th/Td` + `props.children` | 프로토타입 태그 대부분이 여기서 막힘 |
-| 5 | **`#[store]`(전역 상태) + keyed 트리** — 렌더 순서 오프셋 → 키 기반 diff | `README.md` v0.4 로드맵과 일치. 3.1절 5번과도 연결 |
+| ~~1~~ | ~~**매크로 버그 픽스**~~ ✅ v0.4 | — |
+| ~~2~~ | ~~**시간 리터럴(`16ms`, `300ms`, `5min`)**~~ ✅ v0.4 | — |
+| ~~3~~ | ~~**이벤트에서 리스트 아이템 캡처**~~ ✅ v0.4 | — |
+| ~~4~~ | ~~**태그 어휘 1차 확장(11종 + `<Modal>` children)**~~ ✅ v0.4 | — |
+| 5 (→최우선) | **`#[store]`(전역 상태) + keyed 트리** — 렌더 순서 오프셋 → 키 기반 diff | `README.md` v0.4 로드맵. `<Row key={…}>`가 아직 조용히 무시됨 |
 | 6 | **구독 계열** — `on_message` / `on_event` / `on_unmount` / `on_navigate` + `mock`의 메서드·스트림 확장 | `3.rs` 절반의 전제 |
-| 7 | **테스트 슈가** — `.mock()`, `assert_visible/hidden`, 셀렉터 `type_`, `mount(element)`, `Element: Serialize` + insta 스냅샷 | 사양서 8.x 예제가 그대로 돌게 됨 |
+| 7 | **콜백 prop(`on_select: fn(Id)`) + 사용자 컴포넌트 children** | `1.rs` 7번 패턴, `_`가 클릭류에서도 의미를 갖게 됨 |
+| 8 | **플랫폼 확장** — `Desktop`/`Web`/`Terminal`, egui 어댑터에 새 태그·패널 매핑 | 사양서 7.1/7.2 |
+| 9 | **스냅샷 계약** — `Element: Serialize` + insta, `mount(엘리먼트)` | 사양서 8.3 |
 
 ---
 
@@ -224,6 +287,10 @@ rustc --edition 2021 --test --emit=metadata \
 > `app.mock(...)` 같은 오류를 놓친다. **반드시 `--test`를 붙일 것.**
 
 ### 6.2 대표 실패 스니펫
+
+> v0.4 반영 후 재측정: 스니펫 58개 중 **33개 통과** (이전 11개). 아래 표의 항목 중
+> **1~6, 10, 12, 14번(3.1절)** 관련 행은 이제 통과한다. 남은 실패는 대부분
+> "의도적 미구현"(3.2~3.6절) 또는 스니펫 자체의 오류다.
 
 | 파일 | 스니펫(핵심) | 결과 |
 |---|---|---|
@@ -275,19 +342,27 @@ rustc --edition 2021 --test --emit=metadata \
 | `s39_router_match.rs` | `{match route { … => ui! { <Home /> } }}` | ✅ |
 | `w5.rs` | `<Button disabled={n > 0} on_click={n = 0}>` | ✅ |
 
-### 6.4 기존 테스트 현황 (워크스페이스 36개 통과)
+### 6.4 기존 테스트 현황 (워크스페이스 64개 통과)
 
 ```
 tests/counter.rs   tests/todo.rs    tests/effects.rs   tests/lifecycle.rs
 tests/css.rs       tests/mock.rs    tests/stream.rs    tests/raw.rs
-tests/platform.rs  crates/elm-magic-egui/tests/adapter.rs
+tests/platform.rs  tests/syntax.rs  tests/timers.rs    tests/widgets.rs
+tests/sugar.rs     crates/elm-magic-egui/tests/adapter.rs
 ```
+
+- `tests/syntax.rs` — 매크로 문법 픽스 7건 (범위/메서드/컴마/축약/분기 통일/캡처/소유 반복)
+- `tests/timers.rs` — 시간 리터럴, `after` 없는 `on_change`, 지연 효과 + mock
+- `tests/widgets.rs` — 신규 태그 11종 + `<Check>` 토글 + `<TextArea>` 입력 + `<Tab>`/`<Th>` 클릭
+- `tests/sugar.rs` — `.mock()` / `.mock2()`, `assert_text` / `assert_visible` / `assert_hidden`
 
 ---
 
 ## 7. 결론
 
 - `spec.md` / `1.rs`~`3.rs`는 **목표 상태(설계 의도)** 이고, `README.md`는 구현된 범위와 v0.x 제한을 상당 부분 정직하게 기술하고 있다.
-- 문서와 구현의 차이 중 대부분은 **알려진 미구현**(전역 상태 · 구독 · 어휘 확장 · 플랫폼)이며, 이 문서에서 새로 정리한 것은 **문서화되지 않은 매크로 버그 16종(3.1절)** 과 **패턴별 판정(4절)** 이다.
-- 다음 마일스톤의 실질적 병목은 "기능 추가"보다 **매크로 문법 버그 픽스 + 리스트/컴포넌트 children 지원**이며, 이 둘만 처리해도 프로토타입 `1.rs`의 대부분이 컴파일된다.
+- v0.4에서 **문서화되지 않았던 매크로 버그 16종 중 8종을 수정**(2.5절)하고, 태그 어휘를 11종 늘렸으며,
+  분기 타입 통일(`IntoElements`)·소유 반복 덕분에 **`1.rs`의 상당수 패턴과 사양서 3.3/3.4가 그대로 컴파일**된다.
+- 남은 병목은 **`#[store]` + keyed 트리**, **구독 계열**, **콜백 prop / 사용자 컴포넌트 children**,
+  **플랫폼 확장**이며, 이는 모두 `README.md`의 v0.4+ 로드맵과 일치한다.
 

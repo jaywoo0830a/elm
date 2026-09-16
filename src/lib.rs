@@ -64,8 +64,13 @@ macro_rules! mock {
     };
 }
 
-pub use element::{Element, IntoElements};
+pub use element::{Element, IntoElement, IntoElements};
 pub use state::{Arena, Ctx, State};
+
+/// 뷰 본문을 `Element`로 마감한다 (본문이 요소 목록이면 `Fragment`로 감쌈).
+pub fn into_element<T: IntoElement>(value: T) -> Element {
+    value.into_element()
+}
 
 /// A component: pure function from state to an element tree.
 pub trait Component {
@@ -95,11 +100,11 @@ where
 }
 
 pub mod prelude {
-    pub use crate::element::{Element, IntoElements};
+    pub use crate::element::{Element, IntoElement, IntoElements};
     pub use crate::state::{Arena, Ctx, State};
     pub use crate::testing::{mount, mount_with, TestApp};
     pub use crate::platform::{Headless, Platform};
-    pub use crate::run;
+    pub use crate::{into_element, run};
     pub use crate::Component;
     pub use crate::style;
     pub use elm_magic_macros::{css, ui, view};

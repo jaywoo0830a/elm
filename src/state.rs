@@ -14,12 +14,21 @@ pub type StreamTask = Box<dyn FnMut(&mut Arena) -> bool>;
 /// Keyboard handler registered by `on_key` (사양서 5.3).
 pub type KeyHandler = Rc<dyn Fn(&mut Arena)>;
 
+/// A queued effect with its due time (ms on the simulated clock).
+struct Pending {
+    due: u64,
+    run: PendingEffect,
+}
+
 /// Slot storage. All component state lives here; nothing else is mutated.
 #[derive(Default)]
 pub struct Arena {
     slots: Vec<Option<Box<dyn Any>>>,
     /// Effects spawned by `<-` — run by `flush()` (사양서 12: Cmd는 flush 전까지 실행 안 됨).
-    pending: Vec<PendingEffect>,
+    /// `<- f() after 300ms`는 `due`가 미래라 `advance(ms)`가 지나야 실행된다.
+    pending: Vec<Pending>,
+    /// Simulated clock in ms (사양서 8.2). `advance`가 전진시킨다.
+    now: u64,
     /// Live streams registered by `->` — pumped by `pump()` (사양서 5.4).
     streams: Vec<StreamTask>,
 }
@@ -27,6 +36,16 @@ pub struct Arena {
 impl Arena {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Simulated clock (ms).
+    pub fn now(&self) -> u64 {
+        self.now
+    }
+
+    /// Set the simulated clock (used by `TestApp::advance`).
+    pub fn set_now(&mut self, t: u64) {
+        self.now = t;
     }
 
     fn ensure_len(&mut self, idx: usize) {
@@ -70,26 +89,68 @@ impl Arena {
 
     /// Spawn an effect: poll the future to completion, then run the
     /// continuation with the arena (사양서 5.1 — 런타임이 스폰·폴링·재디스패치).
+    /// The effect is due immediately (`flush()`가 실행).
     pub fn spawn<F, G>(&mut self, fut: F, k: G)
     where
         F: Future + 'static,
         F::Output: 'static,
         G: FnOnce(&mut Arena, F::Output) + 'static,
     {
-        self.pending.push(Box::new(move |arena| {
-            let out = crate::runtime::block_on(fut);
-            k(arena, out);
-        }));
+        self.spawn_after(0, fut, k);
     }
 
-    /// Number of pending effects.
+    /// Spawn a delayed effect: `targets <- f() after 300ms` (사양서 5.2 —
+    /// `after` 접미사). `flush()`는 아직 due가 아닌 효과를 실행하지 않고,
+    /// `advance(ms)`가 시계를 전진시켜 실행한다.
+    pub fn spawn_after<F, G>(&mut self, delay_ms: u64, fut: F, k: G)
+    where
+        F: Future + 'static,
+        F::Output: 'static,
+        G: FnOnce(&mut Arena, F::Output) + 'static,
+    {
+        let due = self.now + delay_ms;
+        self.pending.push(Pending {
+            due,
+            run: Box::new(move |arena| {
+                let out = crate::runtime::block_on(fut);
+                k(arena, out);
+            }),
+        });
+    }
+
+    /// Number of pending effects (due or not).
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
-    /// Take all pending effects (used by `flush`).
+    /// Take every pending effect, regardless of due time.
     pub fn take_pending(&mut self) -> Vec<PendingEffect> {
         std::mem::take(&mut self.pending)
+            .into_iter()
+            .map(|p| p.run)
+            .collect()
+    }
+
+    /// Take only the effects whose due time has arrived, keeping the rest
+    /// queued. This is what `flush()` and `advance()` call.
+    pub fn take_due(&mut self) -> Vec<PendingEffect> {
+        let now = self.now;
+        let mut due = Vec::new();
+        let mut rest = Vec::new();
+        for p in std::mem::take(&mut self.pending) {
+            if p.due <= now {
+                due.push(p.run);
+            } else {
+                rest.push(p);
+            }
+        }
+        self.pending = rest;
+        due
+    }
+
+    /// Is an effect queued for later (`<- f() after 300ms`)?
+    pub fn has_deferred(&self) -> bool {
+        self.pending.iter().any(|p| p.due > self.now)
     }
 
     /// Register a stream: each yielded value runs the continuation with the

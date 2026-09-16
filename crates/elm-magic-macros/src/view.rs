@@ -234,8 +234,15 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
         s = total_slots
     ));
     code.push_str(&slot_inits);
+    // 본문의 값이 `Vec<Element>`(조건부/분기 통일)일 수 있으므로 마감한다.
+    code.push_str("::elm_magic::into_element({ ");
     code.push_str(&render_tokens_stream(&body_ts));
+    code.push_str(" })\n");
     code.push_str("\n    }\n}\n");
+    // 디버깅용 전개 덤프: `ELM_MAGIC_DUMP=1 cargo build`
+    if std::env::var_os("ELM_MAGIC_DUMP").is_some() {
+        eprintln!("===== elm-magic view! {} =====\n{}", fn_name, code);
+    }
     code.parse()
         .unwrap_or_else(|e| panic!("elm-magic internal: bad generated code for `{}`: {:?}", fn_name, e))
 }

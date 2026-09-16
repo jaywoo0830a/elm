@@ -34,29 +34,42 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-type MockFn = Box<dyn Fn(&[&dyn Any]) -> Box<dyn Any>>;
+type MockFn = Rc<dyn Fn(&[&dyn Any]) -> Box<dyn Any>>;
 
 thread_local! {
     static MOCKS: RefCell<HashMap<String, MockFn>> = RefCell::new(HashMap::new());
 }
 
+/// Register a mock under `name`, and also under its short (last path segment)
+/// name so that `.mock(search_api, ..)` (which recovers the full type name)
+/// and `mock!(app, search_api, ..)` (which uses `stringify!`) hit the same entry.
+fn insert_mock(name: &str, f: MockFn) {
+    MOCKS.with(|m| {
+        let mut map = m.borrow_mut();
+        map.insert(name.to_string(), Rc::clone(&f));
+        if let Some(tail) = name.rsplit("::").next() {
+            if tail != name {
+                map.insert(tail.to_string(), f);
+            }
+        }
+    });
+}
+
 /// Register a 1-arg mock. Call via `mock!(app, name, |a: T| ...)` — the
 /// argument type annotation gives the registry its downcast key.
 pub fn set_mock1<A: Clone + 'static, Out: 'static>(name: &str, f: impl Fn(A) -> Out + 'static) {
-    MOCKS.with(|m| {
-        let name = name.to_string();
-        m.borrow_mut().insert(
-            name.clone(),
-            Box::new(move |args: &[&dyn Any]| {
+    let name = name.to_string();
+    let mock_name = name.clone();
+    let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
                 let a: &A = args
                     .first()
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 Box::new(f(a.clone())) as Box<dyn Any>
-            }),
-        )
-    });
+            });
+    insert_mock(&name, f);
 }
 
 /// Register a 2-arg mock.
@@ -64,23 +77,20 @@ pub fn set_mock2<A0: Clone + 'static, A1: Clone + 'static, Out: 'static>(
     name: &str,
     f: impl Fn(A0, A1) -> Out + 'static,
 ) {
-    MOCKS.with(|m| {
-        let name = name.to_string();
-        m.borrow_mut().insert(
-            name.clone(),
-            Box::new(move |args: &[&dyn Any]| {
+    let name = name.to_string();
+    let mock_name = name.clone();
+    let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
                 let a0: &A0 = args
                     .first()
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 let a1: &A1 = args
                     .get(1)
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 Box::new(f(a0.clone(), a1.clone())) as Box<dyn Any>
-            }),
-        )
-    });
+            });
+    insert_mock(&name, f);
 }
 
 /// Register a 3-arg mock.
@@ -88,27 +98,24 @@ pub fn set_mock3<A0: Clone + 'static, A1: Clone + 'static, A2: Clone + 'static, 
     name: &str,
     f: impl Fn(A0, A1, A2) -> Out + 'static,
 ) {
-    MOCKS.with(|m| {
-        let name = name.to_string();
-        m.borrow_mut().insert(
-            name.clone(),
-            Box::new(move |args: &[&dyn Any]| {
+    let name = name.to_string();
+    let mock_name = name.clone();
+    let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
                 let a0: &A0 = args
                     .first()
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 let a1: &A1 = args
                     .get(1)
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 let a2: &A2 = args
                     .get(2)
                     .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", name));
+                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
                 Box::new(f(a0.clone(), a1.clone(), a2.clone())) as Box<dyn Any>
-            }),
-        )
-    });
+            });
+    insert_mock(&name, f);
 }
 
 /// Invoke a registered mock with type-erased args; None if not registered.

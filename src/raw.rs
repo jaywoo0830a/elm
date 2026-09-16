@@ -24,11 +24,12 @@ pub fn call_raw<T: Any, F: FnOnce(&mut T)>(payload: &mut dyn Any, f: F) {
 pub fn invoke(element: &Element, payload: &mut dyn Any) {
     match element {
         Element::Raw { widget, .. } => widget(payload),
-        Element::Col { children, .. } | Element::Row { children, .. } => {
-            for c in children {
-                invoke(c, payload);
+        _ => {
+            if let Some(children) = element.children() {
+                for c in children {
+                    invoke(c, payload);
+                }
             }
         }
-        _ => {}
     }
 }

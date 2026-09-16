@@ -41,12 +41,13 @@ fn main() {
 |---|---|---|
 | **변수** = 상태 | `fn Counter(n = 0)`의 매개변수가 아레나 슬롯으로 승격 | ✅ v0.1 |
 | **대입** = 이벤트 | `on_click={n += 1}`이 슬롯 변경으로 컴파일 | ✅ v0.1 |
-| **태그** = 뷰 | `<Col>`, `<Row>`, `<Text>`, `<Button>`, `<Input>` | ✅ v0.1 |
-| **`<-`** = 효과 | `status, users <- fetch()` — 런타임이 스폰·폴링 | ✅ v0.2 |
-| **`mock()`** = 테스트 | `mock!(app, f, |q: T| ...)` · `flush()` · `advance(ms)` · `pump()` · `press_key()` | ✅ v0.3 |
+| **태그** = 뷰 | `Col` `Row` `Text` `Strong` `Button` `Input` `TextArea` `Check` `Tab` `Th` `Td` `Banner` `Spinner` `Divider` `Progress` `Modal` `Raw` (+`Fragment`) | ✅ v0.4 |
+| **`<-`** = 효과 | `status, users <- fetch()`, `<- f() after 300ms` — 런타임이 스폰·폴링 | ✅ v0.2 · 지연 효과 v0.4 |
+| **`mock`** = 테스트 | `app.mock(f, \|q\| …)` · `.mock2` · `mock!` · `flush()` · `advance(ms)` · `pump()` · `press_key()` | ✅ v0.3 / v0.4 |
 
-라이프사이클(v0.2): `on_mount { ... }`, `on_key("Ctrl+S") { ... }`,
-`on_tick(ms) { ... }`, `on_change(x) after ms { ... }`(디바운스). 스타일: `css!`.
+라이프사이클(v0.2/v0.4): `on_mount { ... }`, `on_key("Ctrl+S") { ... }`,
+`on_tick(500ms) { ... }`, `on_change(x) after 300ms { ... }`(디바운스),
+`on_change(x) { ... }`(즉시 감시 — `x`는 `Clone + PartialEq` 필요). 스타일: `css!`.
 
 플랫폼(v0.3): `elm_magic::run(Headless, App)` — 플랫폼은 인자. egui 어댑터는
 별도 크레이트 `elm-magic-egui`(`render(ui, &tree, &mut arena)`).
@@ -81,9 +82,53 @@ cargo test
 | `fn Counter(n = 0)` | `CounterProps { n: i32 }` + `ctx.slot(0, \|\| props.n.clone())` |
 | `on_click={n += 1}` | `Rc::new(move \|_elm_a\| { state.mutate(arena, \|v\| *v += 1) })` |
 | `"Count: {n}"` | `Element::Text { text: format!("Count: {}", n) }` |
-| `{items.map(\|t\| <Row>...)}` | `into_elements(items.iter().map(...))` |
-| `{if x { A } else { B }}` | `into_elements(if ... )` — `IntoElements`로 통일 |
+| `{items.map(\|t\| <Row>...)}` | `into_elements((state.clone()).into_iter().map(...))` — 소유 반복 |
+| `{if x { A } else { B }}` | 분기마다 `into_elements(..)` → `Vec<Element>` 통일 (본문이면 `into_element` → `Fragment`) |
 | `<Counter start=0 />` | 인라인 렌더 + 슬롯 베이스 오프셋 (`SLOTS`) |
+
+## v0.4 — 문법 픽스 + 어휘 확장
+
+버그 픽스로 사양서 3.3/3.4(리스트, 조건부)가 그대로 돌아간다.
+
+```rust
+elm_magic::view! {
+    fn Todos(items: Vec<Todo> = vec![], text = String::new(), filter = String::new()) {
+        on_change(text) after 300ms { }                 // 시간 리터럴
+        <Col>
+            <Input value={text.clone()} on_change={text = _}
+                   on_enter={items.push(Todo { text: text.clone(), done: false })} />
+            // 구조체 축약 · 요소로 삭제 · 컴마 다중문 · 반환값 무시
+            <Button on_click={items.push(Todo { text: text.clone(), done: false }), filter = String::new()}>"Add"</Button>
+            <Button on_click={items.remove(0)}>"pop"</Button>
+            // 분기마다 타입이 달라도 됨 (요소 / 이터레이터 / 문자열)
+            {if items.is_empty() { <Banner kind="info">"empty"</Banner> } else {
+                items.map(|t| <Row>
+                    <Check checked={t.done} on_change={t.done = !t.done}>{t.text}</Check>
+                    <Button on_click={items.remove(t)}>"x"</Button>   // 아이템 캡처 OK
+                </Row>)
+            }}
+            {match filter.as_str() {
+                "" => <Text>"all"</Text>,
+                f => <Strong>"filter: {f}"</Strong>,
+            }}
+            {(0..items.len()).map(|i| <Row>"{i}"</Row>)}          // `..` 뒤 상태 읽기
+        </Col>
+    }
+}
+```
+
+- **새 태그**: `Spinner`, `Divider`, `Strong`, `Banner`, `Check`, `TextArea`, `Tab`, `Th`, `Td`, `Progress`,
+  `<Modal>`(자식 보유). 헤드리스 텍스트 추출·덤프·egui 어댑터까지 매핑.
+- **새 규칙**:
+  - `{_}`는 값 이벤트(`on_change` / `on_enter`)에서만 — 아니면 명확한 컴파일 에러.
+  - `state.remove(정수)`는 인덱스 삭제, `state.remove(그 밖)`은 **값으로 삭제**(`PartialEq` 필요).
+  - `items.iter()` / `items.map(…)`는 **소유 반복**(`into_iter`)으로 전개 — 리스트 아이템을
+    이벤트 핸들러에 넘길 수 있다(사양서 3.3의 "`&` 생략").
+  - 뷰 본문/분기의 값이 `Vec<Element>`면 내부적으로 `Fragment`로 감싼다.
+- **테스트 슈가**: `app.mock(fn, |q| …)` / `.mock2` / `.mock3`, `assert_text` / `assert_visible` / `assert_hidden`,
+  `type_into("input"|"textarea"|클래스, 값)`, `toggle(label)`, `set_check(label, v)`, `has_pending_after()`.
+- **지연 효과**: `on_mount { fresh <- api_user(id) after 5min }` — `flush()`는 due가 된 효과만 실행하고,
+  `app.advance(ms)`가 시계를 밀어 지연 효과를 발화시킨다.
 
 ## v0.3 — 플랫폼 (사양서 7, 5.4, 8.2)
 
@@ -141,12 +186,34 @@ elm_magic::view! {
 ## v0.3 제한
 
 - `mock!`은 클로저 매개변수에 타입 어노테이션이 필요
-  (`|q: String| ...`) — 다운캐스트 키로 사용. 사양서의 `.mock(fn, impl)`
-  메서드 체인 대신 자유 매크로 `mock!(app, fn, |args| ...)`로 구현.
+  (`|q: String| ...`) — 다운캐스트 키로 사용.
+  v0.4부터는 사양서식 `app.mock(fn, |q| ...)`도 가능(함수명을 타입 이름에서 추출).
 - 효과 목은 `<-`의 단순 호출 `f(args)` 형태만 지원(메서드 호출·복합식은 미지원),
   스트림(`->`) 목은 미지원. 0-인자 효과 함수는 목 불가.
 - `mock`은 스레드 로컬 — 각 테스트는 독립 스레드에서 격리됨.
 - `css!` 자기등록은 `.init_array` ctor — Linux/macOS 동작, wasm은 v1.0 과제.
-- `on_message` / `on_event` / `on_navigate` 구독과 `#[store]`는 v0.4 로드맵.
-- egui 어댑터는 Col/Row/Text/Button/Input/Raw만 매핑(`<Scroll>`, `<Plot>` 등은 v1.0).
+- `on_message` / `on_event` / `on_navigate` 구독과 `#[store]`는 아직 미구현.
+
+## v0.4 제한
+
+- `on_change(x)`의 `x`는 `Clone + PartialEq` (변화 감지를 위해 값 비교).
+- `{_}`는 값 이벤트(`on_change`/`on_enter`)에서만 — `on_click` 등에는 전달값이 없다.
+- `state.remove(비정수)`는 `Vec::retain` + `PartialEq`로 전개된다(`items.remove(t)` = 값으로 삭제).
+- `items.iter()` / `items.map(…)`는 소유 반복(`into_iter`)이므로 아이템을 수정하려면
+  `items` 쪽 메서드를 쓰거나 다시 `push`해야 한다 (`&mut` 이터레이션은 사양서 대상 아님).
+- 콜백 prop(`on_select: fn(Id)`)과 **사용자 컴포넌트의 children**은 아직 미구현
+  (children은 `<Modal>`처럼 빌트인만).
+- `Table`, `VirtualList`, `Scroll`, `Plot`, `Dock`, `Window`, `Sidebar` 등 어휘와
+  `Desktop` / `Web` / `Terminal` 플랫폼은 v0.5+ 과제 (egui 어댑터는 현재 17개 태그 매핑).
+- keyed 트리(`<Row key={…}>`)는 여전히 무시된다 (렌더 순서 기반 슬롯 오프셋).
+- **리스트 아이템 필드 대입은 아직 안 된다**: `items.map(|t| …)`의 `t`는 값 복사본이므로
+  `on_change={t.done = !t.done}` 같은 대입은 `E0594`가 난다. 대신 `items` 쪽 메서드를 쓴다
+  (예: `<Check checked={t.done} on_change={items.toggle(&t)}>` — 아이템 편집/인덱스 추적은 다음 과제).
+- 한 행에서 **같은 아이템을 캡처하는 핸들러가 2개 이상**이면 `move` 캡처가 충돌한다.
+  핸들러는 아이템당 하나만 두고, 나머지는 읽기(텍스트/`checked`)로 표현한다.
+
+디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` 전개 코드를 그대로 볼 수 있다
+(사양서 13장의 "`cargo expand` 필수" 항목 대체).
+
+전체 현황: `prototype/prototypes/implementation-status.md`
 
