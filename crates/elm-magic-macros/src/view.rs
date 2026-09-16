@@ -1,7 +1,8 @@
 //! `#[view]` attribute macro implementation.
 
-use crate::jsx::{self, Env};
-use proc_macro::{Delimiter, Group, TokenStream, TokenTree};
+use crate::jsx;
+use proc_macro::{Delimiter, Group, Spacing, TokenStream, TokenTree};
+use std::cell::Cell;
 use std::collections::HashSet;
 
 /// Infer the type of an untyped parameter from its default literal.
@@ -14,7 +15,7 @@ fn infer_type(default: &str) -> Option<&'static str> {
     if d == "true" || d == "false" {
         return Some("bool");
     }
-    if compact == "String::new()" {
+    if compact == "String::new()" || compact.starts_with("String::from(") {
         return Some("::std::string::String");
     }
     if let Some(tok) = d.split_whitespace().next() {
@@ -109,6 +110,7 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     let param_groups = split_params(param_toks);
 
     let mut props_fields = String::new();
+    let mut default_fields: Vec<(String, Vec<TokenTree>)> = Vec::new();
     let mut slot_inits = String::new();
     let mut state_names: HashSet<String> = HashSet::new();
     let mut slot_idx = 0usize;
@@ -121,6 +123,7 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
         // `name` | `name: Type` | `name = default` | `name: Type = default`
         let mut ty: Option<String> = None;
         let mut default: Option<String> = None;
+        let mut default_toks: Option<Vec<TokenTree>> = None;
         if p.len() > 1 {
             let mut k = 1;
             if let Some(TokenTree::Punct(colon)) = p.get(k) {
@@ -155,6 +158,7 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
                                 .collect::<Vec<_>>()
                                 .join(" "),
                         );
+                        default_toks = Some(p[k + 1..].to_vec());
                     }
                 }
             }
@@ -174,6 +178,9 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
                 )
             });
         props_fields.push_str(&format!("    pub {}: {},\n", pname, ty));
+        // keep the raw default tokens so the generated `Default` impl uses
+        // the user-provided default expression verbatim
+        default_fields.push((pname.clone(), default_toks.unwrap()));
         slot_inits.push_str(&format!(
             "    let __elm_state_{p} = __elm_ctx.slot({i}usize, || __elm_props.{p}.clone());\n",
             p = pname,
@@ -183,33 +190,89 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
         slot_idx += 1;
     }
 
-    let env = Env { states: &state_names };
+    let slot_cell = Cell::new(slot_idx);
+    let env = jsx::Env {
+        states: &state_names,
+        slots: &slot_cell,
+    };
     let body_toks: Vec<TokenTree> = body.stream().into_iter().collect();
     let body_ts = jsx::transform_top(&body_toks, &env);
+    // lifecycle constructs (on_mount/on_tick/on_change) allocate hidden slots
+    let total_slots = slot_cell.get();
 
     let mut head = String::new();
     head.push_str(&format!(
-        "{v}#[derive(::core::clone::Clone, ::core::default::Default)]\n{v}struct {n}Props {{\n",
+        "{v}#[derive(::core::clone::Clone)]\n{v}struct {n}Props {{\n",
         v = vis,
         n = fn_name
     ));
     head.push_str(&props_fields);
     head.push_str("}\n");
-    head.push_str(&format!(
-        "{v}struct {n};\nimpl ::elm_magic::Component for {n} {{\n    type Props = {n}Props;\n    const SLOTS: usize = {s};\n    fn render(__elm_ctx: &mut ::elm_magic::Ctx, __elm_props: &{n}Props) -> ::elm_magic::Element {{\n",
-        v = vis,
-        n = fn_name,
-        s = slot_idx
-    ));
 
     // Assemble the whole expansion as one string and parse it once:
     // partial fragments (unclosed braces) cannot be parsed on their own.
     let mut code = String::new();
     code.push_str(&head);
+    // Manual Default so user-provided defaults (e.g. `status = String::from("idle")`)
+    // become the initial prop values, not `Default::default()` of the type.
+    code.push_str(&format!(
+        "impl ::core::default::Default for {n}Props {{\n    fn default() -> Self {{\n        Self {{\n",
+        n = fn_name
+    ));
+    for (pname, toks) in &default_fields {
+        code.push_str(&format!(
+            "            {}: {},\n",
+            pname,
+            render_tokens(toks)
+        ));
+    }
+    code.push_str("        }\n    }\n}\n");
+    code.push_str(&format!(
+        "{v}struct {n};\nimpl ::elm_magic::Component for {n} {{\n    type Props = {n}Props;\n    const SLOTS: usize = {s};\n    fn render(__elm_ctx: &mut ::elm_magic::Ctx, __elm_props: &{n}Props) -> ::elm_magic::Element {{\n",
+        v = vis,
+        n = fn_name,
+        s = total_slots
+    ));
     code.push_str(&slot_inits);
-    code.push_str(&body_ts.to_string());
+    code.push_str(&render_tokens_stream(&body_ts));
     code.push_str("\n    }\n}\n");
     code.parse()
         .unwrap_or_else(|e| panic!("elm-magic internal: bad generated code for `{}`: {:?}", fn_name, e))
+}
+
+/// Serialize tokens honoring joint punctuation spacing, so `::` stays `::`.
+fn render_tokens_stream(ts: &TokenStream) -> String {
+    render_tokens(&ts.clone().into_iter().collect::<Vec<_>>())
+}
+
+fn render_tokens(toks: &[TokenTree]) -> String {
+    let mut s = String::new();
+    for t in toks {
+        match t {
+            TokenTree::Group(g) => {
+                let (open, close) = match g.delimiter() {
+                    Delimiter::Parenthesis => ("(", ")"),
+                    Delimiter::Brace => ("{", "}"),
+                    Delimiter::Bracket => ("[", "]"),
+                    Delimiter::None => ("", ""),
+                };
+                s.push_str(open);
+                s.push_str(&render_tokens(&g.stream().into_iter().collect::<Vec<_>>()));
+                s.push_str(close);
+                s.push(' ');
+            }
+            TokenTree::Punct(p) => {
+                s.push(p.as_char());
+                if p.spacing() == Spacing::Alone {
+                    s.push(' ');
+                }
+            }
+            other => {
+                s.push_str(&other.to_string());
+                s.push(' ');
+            }
+        }
+    }
+    s
 }
 

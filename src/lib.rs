@@ -36,6 +36,8 @@
 //! 속성 매크로(`#[view]`) 대신 함수형 매크로 `view! { fn ... }`로 정의한다.
 
 mod element;
+pub mod runtime;
+pub mod style;
 mod state;
 pub mod testing;
 
@@ -51,7 +53,7 @@ pub trait Component {
 }
 
 /// Re-exported procedural macros.
-pub use elm_magic_macros::{ui, view};
+pub use elm_magic_macros::{css, ui, view};
 
 /// Mount a component headlessly (no renderer, no runtime) for tests.
 pub use testing::{mount, mount_with};
@@ -61,7 +63,8 @@ pub mod prelude {
     pub use crate::state::{Arena, Ctx, State};
     pub use crate::testing::{mount, mount_with, TestApp};
     pub use crate::Component;
-    pub use elm_magic_macros::{ui, view};
+    pub use crate::style;
+    pub use elm_magic_macros::{css, ui, view};
 }
 
 /// `mount!(Counter)` — headless mount. `mount!(Counter, props)` — with props.

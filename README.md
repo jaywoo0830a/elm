@@ -36,13 +36,16 @@ fn main() {
 
 ## 다섯 가지 문법 (v0.1 구현 현황)
 
-| 문법 | 의미 | v0.1 |
+| 문법 | 의미 | 현황 |
 |---|---|---|
-| **변수** = 상태 | `fn Counter(n = 0)`의 매개변수가 아레나 슬롯으로 승격 | ✅ |
-| **대입** = 이벤트 | `on_click={n += 1}`이 슬롯 변경으로 컴파일 | ✅ |
-| **태그** = 뷰 | `<Col>`, `<Row>`, `<Text>`, `<Button>`, `<Input>` | ✅ |
-| **`<-`** = 효과 | async / 스트림 / 스폰 | v0.2 |
-| **`mock()`** = 테스트 | 런타임 교체 · 시간 진행 | v0.2 |
+| **변수** = 상태 | `fn Counter(n = 0)`의 매개변수가 아레나 슬롯으로 승격 | ✅ v0.1 |
+| **대입** = 이벤트 | `on_click={n += 1}`이 슬롯 변경으로 컴파일 | ✅ v0.1 |
+| **태그** = 뷰 | `<Col>`, `<Row>`, `<Text>`, `<Button>`, `<Input>` | ✅ v0.1 |
+| **`<-`** = 효과 | `status, users <- fetch()` — 런타임이 스폰·폴링 | ✅ v0.2 |
+| **`mock()`** = 테스트 | `flush()` · `advance(ms)` · `press_key()` (모킹 슈가는 v0.3) | ✅ v0.2 |
+
+라이프사이클(v0.2): `on_mount { ... }`, `on_key("Ctrl+S") { ... }`,
+`on_tick(ms) { ... }`, `on_change(x) after ms { ... }`(디바운스). 스타일: `css!`.
 
 ## 구조
 
@@ -77,6 +80,29 @@ cargo test
 | `{items.map(\|t\| <Row>...)}` | `into_elements(items.iter().map(...))` |
 | `{if x { A } else { B }}` | `into_elements(if ... )` — `IntoElements`로 통일 |
 | `<Counter start=0 />` | 인라인 렌더 + 슬롯 베이스 오프셋 (`SLOTS`) |
+
+## v0.2 — 효과 (사양서 5.1, 5.2)
+
+```rust
+elm_magic::view! {
+    fn Users(users: Vec<String> = vec![], status = String::from("idle")) {
+        on_mount { status, users <- load_users() }          // 마운트 시 로드
+        <Col>
+            <Button on_click={status, users <- load_users()}>"Load"</Button>
+            on_key("Ctrl+R") { status, users <- load_users() } // 키보드
+            on_change(status) after 300 { }                    // 디바운스 감시
+            on_tick(1000) { }                                  // 티커
+            "status: {status}"
+            {users.map(|u| <Row>"{u}"</Row>)}
+        </Col>
+    }
+}
+```
+
+- `<-`는 "이 future의 결과를 이 슬롯들에 쓴다" — `Pin`/`Box`/`Send` 노출 없음.
+- Cmd는 flush 전까지 실행 안 됨: `app.flush()`로 대기 효과 실행 (사양서 12).
+- 시뮬레이션 시계: `app.advance(ms)`로 `on_tick`/`on_change after` 구동.
+- 키보드: `app.press_key("Ctrl+S")`.
 
 ## v0.1 제한
 

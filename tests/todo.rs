@@ -1,6 +1,7 @@
 #[derive(Clone)]
 struct Todo {
     text: String,
+    #[allow(dead_code)]
     done: bool,
 }
 
@@ -51,7 +52,7 @@ fn todo_add_two_items() {
 
 #[test]
 fn cart_conditional_and_derived() {
-    let mut app = elm_magic::mount_with::<Cart>(CartProps {
+    let app = elm_magic::mount_with::<Cart>(CartProps {
         items: vec![("A".into(), 10.0), ("B".into(), 5.0)],
     });
     app.expect_text("Subtotal: 15");

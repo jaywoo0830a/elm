@@ -29,7 +29,44 @@ pub fn mount_with<C: Component>(props: C::Props) -> TestApp<C> {
 impl<C: Component> TestApp<C> {
     fn rerender(&mut self) {
         self.ctx.base = 0;
+        self.ctx.keys.clear();
         self.tree = C::render(&mut self.ctx, &self.props);
+    }
+
+    /// Run all pending effects spawned by `<-` (사양서 12: Cmd는 flush 전까지
+    /// 실행 안 됨), re-rendering after each round until the queue drains.
+    pub fn flush(&mut self) {
+        for _ in 0..1000 {
+            if self.ctx.arena.pending_count() == 0 {
+                break;
+            }
+            let pending = self.ctx.arena.take_pending();
+            for effect in pending {
+                effect(&mut self.ctx.arena);
+            }
+            self.rerender();
+        }
+    }
+
+    /// Press a key: dispatch to the `on_key` handler registered by the
+    /// last render (사양서 5.3).
+    pub fn press_key(&mut self, key: &str) {
+        let handler = self
+            .ctx
+            .keys
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, h)| h.clone())
+            .unwrap_or_else(|| panic!("no on_key handler for {:?}", key));
+        handler(&mut self.ctx.arena);
+        self.rerender();
+    }
+
+    /// Advance the simulated clock by `ms` and re-render — fires due
+    /// `on_tick` intervals and `on_change(x) after <ms>` debounces.
+    pub fn advance(&mut self, ms: u64) {
+        self.ctx.now += ms;
+        self.rerender();
     }
 
     /// Click the first Button whose text matches.

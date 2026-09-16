@@ -1,8 +1,11 @@
 use proc_macro::{Delimiter, Group, Punct, Spacing, Span, TokenStream, TokenTree};
+use std::cell::Cell;
 use std::collections::HashSet;
 
 pub struct Env<'a> {
     pub states: &'a HashSet<String>,
+    /// next hidden slot index for lifecycle constructs (on_mount/on_tick/…)
+    pub slots: &'a Cell<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -93,6 +96,164 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
     let mut i = 0;
     while i < toks.len() {
         match &toks[i] {
+            TokenTree::Ident(id) if id.to_string() == "on_mount" => {
+                if let Some(TokenTree::Group(g)) = toks.get(i + 1) {
+                    if g.delimiter() == Delimiter::Brace {
+                        let slot = env.slots.get();
+                        env.slots.set(slot + 1);
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "{{ \
+                                let __elm_m = __elm_ctx.slot({s}usize, || false); \
+                                if !*__elm_m.get(&__elm_ctx.arena) {{ \
+                                    __elm_m.set(&mut __elm_ctx.arena, true); \
+                                    let _elm_a = &mut __elm_ctx.arena; \
+                                    {body} \
+                                }} \
+                                }}",
+                                s = slot,
+                                body = body_ts
+                            )),
+                            false,
+                        ));
+                        i += 2;
+                        continue;
+                    }
+                }
+                panic!("elm-magic: on_mount expects a block: on_mount {{ ... }}");
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_key" => {
+                match (toks.get(i + 1), toks.get(i + 2)) {
+                    (Some(TokenTree::Group(key)), Some(TokenTree::Group(g)))
+                        if key.delimiter() == Delimiter::Parenthesis
+                            && g.delimiter() == Delimiter::Brace =>
+                    {
+                        let key_ts = transform_render(
+                            &key.stream().into_iter().collect::<Vec<_>>(),
+                            env,
+                        )
+                        .to_string();
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "__elm_ctx.keys.push((::std::convert::Into::into({}), \
+                                 ::std::rc::Rc::new(move |_elm_a: &mut ::elm_magic::Arena| {{ {} }})));",
+                                key_ts, body_ts
+                            )),
+                            false,
+                        ));
+                        i += 3;
+                        continue;
+                    }
+                    _ => panic!("elm-magic: on_key expects on_key(\"Key\") {{ ... }}"),
+                }
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_tick" => {
+                match (toks.get(i + 1), toks.get(i + 2)) {
+                    (Some(TokenTree::Group(p)), Some(TokenTree::Group(g)))
+                        if p.delimiter() == Delimiter::Parenthesis
+                            && g.delimiter() == Delimiter::Brace =>
+                    {
+                        let period = p.stream().to_string().replace(' ', "");
+                        let slot = env.slots.get();
+                        env.slots.set(slot + 1);
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "{{ \
+                                let __elm_t = __elm_ctx.slot({s}usize, || 0u64); \
+                                if __elm_ctx.now - *__elm_t.get(&__elm_ctx.arena) >= {p}u64 {{ \
+                                    __elm_t.set(&mut __elm_ctx.arena, __elm_ctx.now); \
+                                    let _elm_a = &mut __elm_ctx.arena; \
+                                    {body} \
+                                }} \
+                                }}",
+                                s = slot,
+                                p = period,
+                                body = body_ts
+                            )),
+                            false,
+                        ));
+                        i += 3;
+                        continue;
+                    }
+                    _ => panic!("elm-magic: on_tick expects on_tick(ms) {{ ... }}"),
+                }
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_change" => {
+                // on_change(expr) after <ms> { ... }
+                match (
+                    toks.get(i + 1),
+                    toks.get(i + 2),
+                    toks.get(i + 3),
+                    toks.get(i + 4),
+                ) {
+                    (
+                        Some(TokenTree::Group(val)),
+                        Some(TokenTree::Ident(a)),
+                        Some(TokenTree::Literal(delay)),
+                        Some(TokenTree::Group(g)),
+                    )
+                        if val.delimiter() == Delimiter::Parenthesis
+                            && a.to_string() == "after"
+                            && g.delimiter() == Delimiter::Brace =>
+                    {
+                        let val_ts = transform_render(
+                            &val.stream().into_iter().collect::<Vec<_>>(),
+                            env,
+                        )
+                        .to_string();
+                        let delay = delay.to_string();
+                        let p_slot = env.slots.get();
+                        let s_slot = p_slot + 1;
+                        let f_slot = p_slot + 2;
+                        env.slots.set(p_slot + 3);
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "{{ \
+                                let __elm_v = ({v}); \
+                                let __elm_p = __elm_ctx.slot({p}usize, || ::std::option::Option::None); \
+                                let __elm_s = __elm_ctx.slot({s}usize, || 0u64); \
+                                let __elm_f = __elm_ctx.slot({f}usize, || false); \
+                                let mut __elm_pend = __elm_p.get(&__elm_ctx.arena).clone(); \
+                                let mut __elm_since = *__elm_s.get(&__elm_ctx.arena); \
+                                let mut __elm_fired = *__elm_f.get(&__elm_ctx.arena); \
+                                if __elm_pend.as_ref() != ::std::option::Option::Some(&__elm_v) {{ \
+                                    __elm_pend = ::std::option::Option::Some(__elm_v.clone()); \
+                                    __elm_since = __elm_ctx.now; \
+                                    __elm_fired = false; \
+                                }} \
+                                __elm_p.set(&mut __elm_ctx.arena, __elm_pend.clone()); \
+                                __elm_s.set(&mut __elm_ctx.arena, __elm_since); \
+                                if !__elm_fired && __elm_ctx.now - __elm_since >= {d}u64 {{ \
+                                    __elm_f.set(&mut __elm_ctx.arena, true); \
+                                    let _elm_a = &mut __elm_ctx.arena; \
+                                    {body} \
+                                }} \
+                                }}",
+                                v = val_ts,
+                                p = p_slot,
+                                s = s_slot,
+                                f = f_slot,
+                                d = delay,
+                                body = body_ts
+                            )),
+                            false,
+                        ));
+                        i += 5;
+                        continue;
+                    }
+                    _ => panic!(
+                        "elm-magic: on_change expects on_change(expr) after <ms> {{ ... }}"
+                    ),
+                }
+            }
             TokenTree::Ident(id) if id.to_string() == "let" => {
                 let mut stmt = Vec::new();
                 while i < toks.len() {
@@ -265,6 +426,39 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
 
 // ── events ──────────────────────────────────────────────────
 
+/// Try to parse an effect `a, b <- expr` starting at `i`.
+/// Returns (targets, index of RHS start) if present.
+fn try_parse_effect(toks: &[TokenTree], i: usize, env: &Env) -> Option<(Vec<String>, usize)> {
+    let mut j = i;
+    let mut targets = Vec::new();
+    loop {
+        match toks.get(j) {
+            Some(TokenTree::Ident(id)) if env.states.contains(&id.to_string()) => {
+                targets.push(id.to_string());
+                j += 1;
+                match toks.get(j) {
+                    Some(TokenTree::Punct(p)) if p.as_char() == ',' => j += 1,
+                    _ => break,
+                }
+            }
+            _ => return None,
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    let is_arrow = matches!(
+        (toks.get(j), toks.get(j + 1)),
+        (Some(TokenTree::Punct(l)), Some(TokenTree::Punct(r)))
+            if l.as_char() == '<' && l.spacing() == Spacing::Joint && r.as_char() == '-'
+    );
+    if is_arrow {
+        Some((targets, j + 2))
+    } else {
+        None
+    }
+}
+
 /// Event handler top level: `n += 1`, `text = e`, `items.push(x)` → slot ops.
 fn transform_event(toks: &[TokenTree], env: &Env, value_binding: Option<&str>) -> TokenStream {
     let mut out: Vec<TokenTree> = Vec::new();
@@ -280,6 +474,44 @@ fn transform_event(toks: &[TokenTree], env: &Env, value_binding: Option<&str>) -
                 }
             }
             if env.states.contains(&name) {
+                // effect? `a, b <- expr`
+                if let Some((targets, rhs_start)) = try_parse_effect(toks, i, env) {
+                    let rhs_end = toks[rhs_start..]
+                        .iter()
+                        .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ';'))
+                        .map(|p| rhs_start + p)
+                        .unwrap_or(toks.len());
+                    let rhs: Vec<TokenTree> = toks[rhs_start..rhs_end].to_vec();
+                    let rhs_ts = transform_event_read(&rhs, env, value_binding).to_string();
+                    let mut sets = String::new();
+                    for (n, t) in targets.iter().enumerate() {
+                        let out = if targets.len() == 1 {
+                            "__elm_out".to_string()
+                        } else {
+                            format!("__elm_out.{}", n)
+                        };
+                        sets.push_str(&format!(
+                            "__elm_state_{}.set(__elm_a2, ({}).clone()); ",
+                            t, out
+                        ));
+                    }
+                    let emitted = format!(
+                        "{{ \
+                        let __elm_fut = ({}); \
+                        _elm_a.spawn(__elm_fut, move |__elm_a2: &mut ::elm_magic::Arena, __elm_out| {{ \
+                            {} \
+                        }}); \
+                        }}",
+                        rhs_ts, sets
+                    );
+                    out.extend(parse_ts(&emitted));
+                    i = rhs_end;
+                    if i < toks.len() {
+                        out.push(punct(';'));
+                        i += 1;
+                    }
+                    continue;
+                }
                 // struct-literal field key `name:` stays verbatim
                 let is_field_key = matches!(toks.get(i + 1), Some(TokenTree::Punct(p))
                     if p.as_char() == ':' && p.spacing() == Spacing::Alone);
@@ -677,7 +909,19 @@ fn text_from_children(children: &[TokenTree], env: &Env) -> String {
             TokenTree::Literal(l) => {
                 let s = l.to_string();
                 if s.starts_with('"') {
-                    fmt.push_str(&s[1..s.len() - 1]);
+                    let content = &s[1..s.len() - 1];
+                    if content.contains('{') {
+                        // interpolated literal: "a {x}" contributes fmt + args
+                        let (f, a) = split_fmt(content);
+                        fmt.push_str(&f);
+                        for x in a {
+                            let toks: Vec<TokenTree> =
+                                x.parse::<TokenStream>().unwrap().into_iter().collect();
+                            args.push(transform_render(&toks, env).to_string());
+                        }
+                    } else {
+                        fmt.push_str(content);
+                    }
                 }
                 k += 1;
             }

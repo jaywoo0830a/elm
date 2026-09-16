@@ -1,8 +1,10 @@
 //! Procedural macros for elm-magic.
 //!
-//! - `#[view]` — turns a function with default-valued params into a `Component`.
+//! - `view!` — turns a function with default-valued params into a `Component`.
 //! - `ui!` — JSX-like element builder expression.
+//! - `css!` — style registry registration.
 
+mod css;
 mod jsx;
 mod view;
 
@@ -38,6 +40,20 @@ pub fn ui(input: TokenStream) -> TokenStream {
     let toks: Vec<proc_macro::TokenTree> = input.into_iter().collect();
     let env = jsx::Env {
         states: &std::collections::HashSet::new(),
+        slots: &std::cell::Cell::new(0),
     };
     jsx::transform_top(&toks, &env)
+}
+
+/// Define styles (사양서 6.1 — Tailwind-like CSS).
+///
+/// ```ignore
+/// elm_magic::css! {
+///     .card { gap: 8; padding: 16; bg: surface; }
+///     button { bg: primary; }
+/// }
+/// ```
+#[proc_macro]
+pub fn css(input: TokenStream) -> TokenStream {
+    css::expand(input)
 }
