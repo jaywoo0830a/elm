@@ -1,6 +1,13 @@
+[workspace]
+members = ["crates/elm-magic-macros"]
+
 [package]
-name = "elm"
+name = "elm-magic"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "State is a variable, events are assignment, the screen is the function body. A lightweight pure-functional UI library disguised as JS/JSX via macros."
+license = "MIT"
 
 [dependencies]
+elm-magic-macros = { path = "crates/elm-magic-macros" }
+

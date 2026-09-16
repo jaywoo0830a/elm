@@ -1,0 +1,189 @@
+//! Headless testing: mount, click, type, expect — no renderer, no runtime.
+
+use crate::element::Element;
+use crate::state::Ctx;
+use crate::Component;
+
+/// A mounted component instance for headless tests.
+pub struct TestApp<C: Component> {
+    pub ctx: Ctx,
+    pub props: C::Props,
+    pub tree: Element,
+}
+
+/// Mount a component with default props.
+pub fn mount<C: Component>() -> TestApp<C>
+where
+    C::Props: Default,
+{
+    mount_with::<C>(C::Props::default())
+}
+
+/// Mount a component with explicit props.
+pub fn mount_with<C: Component>(props: C::Props) -> TestApp<C> {
+    let mut ctx = Ctx::new();
+    let tree = C::render(&mut ctx, &props);
+    TestApp { ctx, props, tree }
+}
+
+impl<C: Component> TestApp<C> {
+    fn rerender(&mut self) {
+        self.ctx.base = 0;
+        self.tree = C::render(&mut self.ctx, &self.props);
+    }
+
+    /// Click the first Button whose text matches.
+    pub fn click(&mut self, text: &str) {
+        let handler = find_button(&self.tree, text)
+            .unwrap_or_else(|| panic!("no button with text {:?} in tree", text));
+        if let Some(h) = handler {
+            h(&mut self.ctx.arena);
+        }
+        self.rerender();
+    }
+
+    /// Type into the first Input (fires `on_change`).
+    pub fn type_(&mut self, value: &str) {
+        let handler = find_input_change(&self.tree)
+            .expect("no input with on_change in tree");
+        handler(&mut self.ctx.arena, value.to_string());
+        self.rerender();
+    }
+    /// Press Enter on the first Input (fires `on_enter` with its current value).
+    pub fn press_enter(&mut self) {
+        let (value, handler) = find_input_enter(&self.tree)
+            .unwrap_or_else(|| panic!("no input with on_enter in tree"));
+        if let Some(h) = handler {
+            h(&mut self.ctx.arena, value);
+        }
+        self.rerender();
+    }
+
+    /// All visible text, one node per line.
+    pub fn text(&self) -> String {
+        let mut out = Vec::new();
+        collect_text(&self.tree, &mut out);
+        out.join("\n")
+    }
+
+    /// Assert that the given text appears somewhere in the tree.
+    pub fn expect_text(&self, expected: &str) {
+        let all = self.text();
+        assert!(
+            all.lines().any(|l| l.contains(expected))
+                || all.contains(expected),
+            "expected text {:?} not found.\n--- tree text ---\n{}\n-----------------",
+            expected,
+            all
+        );
+    }
+
+    /// Indented tree dump — the snapshot contract (사양서 8.3).
+    pub fn render_tree(&self) -> String {
+        let mut out = String::new();
+        dump(&self.tree, 0, &mut out);
+        out
+    }
+}
+
+use crate::element::Element::*;
+use std::rc::Rc;
+
+type H = Option<Rc<dyn Fn(&mut crate::state::Arena)>>;
+type VH = Option<Rc<dyn Fn(&mut crate::state::Arena, String)>>;
+
+fn find_button(el: &Element, text: &str) -> Option<H> {
+    match el {
+        Button { on_click, .. } if button_matches(el, text) => Some(on_click.clone()),
+        Col { children, .. } | Row { children, .. } => {
+            children.iter().find_map(|c| find_button(c, text))
+        }
+        _ => None,
+    }
+}
+
+fn button_matches(el: &Element, text: &str) -> bool {
+    match el {
+        Button { text: t, .. } => t == text,
+        _ => false,
+    }
+}
+
+fn find_input_change(el: &Element) -> VH {
+    match el {
+        Input { on_change, .. } => on_change.clone(),
+        Col { children, .. } | Row { children, .. } => {
+            children.iter().find_map(find_input_change)
+        }
+        _ => None,
+    }
+}
+
+fn find_input_enter(el: &Element) -> Option<(String, VH)> {
+    match el {
+        Input { value, on_enter, .. } => Some((value.clone(), on_enter.clone())),
+        Col { children, .. } | Row { children, .. } => {
+            children.iter().find_map(find_input_enter)
+        }
+        _ => None,
+    }
+}
+
+fn collect_text(el: &Element, out: &mut Vec<String>) {
+    match el {
+        Text { text, .. } => out.push(text.clone()),
+        Button { text, .. } => out.push(text.clone()),
+        Input { value, .. } => out.push(format!("[input: {}]", value)),
+        Col { children, .. } | Row { children, .. } => {
+            for c in children {
+                collect_text(c, out);
+            }
+        }
+    }
+}
+
+fn dump(el: &Element, depth: usize, out: &mut String) {
+    let pad = "  ".repeat(depth);
+    match el {
+        Text { text, class } => {
+            out.push_str(&format!("{}Text {:?}{}\n", pad, text, fmt_class(class)));
+        }
+        Button { text, disabled, class, .. } => {
+            let d = if *disabled { " disabled" } else { "" };
+            out.push_str(&format!(
+                "{}Button {:?}{}\n",
+                pad,
+                text,
+                format!("{}{}", d, fmt_class(class))
+            ));
+        }
+        Input { value, class, .. } => {
+            out.push_str(&format!(
+                "{}Input value={:?}{}\n",
+                pad,
+                value,
+                fmt_class(class)
+            ));
+        }
+        Col { children, class, .. } => {
+            out.push_str(&format!("{}Col{}\n", pad, fmt_class(class)));
+            for c in children {
+                dump(c, depth + 1, out);
+            }
+        }
+        Row { children, class, .. } => {
+            out.push_str(&format!("{}Row{}\n", pad, fmt_class(class)));
+            for c in children {
+                dump(c, depth + 1, out);
+            }
+        }
+    }
+}
+
+fn fmt_class(class: &[String]) -> String {
+    if class.is_empty() {
+        String::new()
+    } else {
+        format!(" .{}", class.join("."))
+    }
+}
