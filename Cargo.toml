@@ -29,3 +29,7 @@ serde = ["dep:serde"]
 # 스냅샷 계약 테스트 전용 (사양서 8.3) — 배포 그래프에는 포함되지 않는다.
 serde_json = "1"
 
+[package.metadata.docs.rs]
+# 선택 기능(`serde`)까지 문서화한다 — `Element: Serialize`가 docs.rs에 보이도록.
+all-features = true
+
