@@ -154,6 +154,40 @@ impl Element {
         }
     }
 
+    /// `css!`의 **태그 셀렉터** 이름 (`button { … }`). 대소문자는 무시된다.
+    ///
+    /// `Fragment`는 태그가 없으므로 빈 문자열 — 어떤 태그 셀렉터와도 안 맞는다.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Element::Text { .. } => "text",
+            Element::Strong { .. } => "strong",
+            Element::Col { .. } => "col",
+            Element::Row { .. } => "row",
+            Element::Button { .. } => "button",
+            Element::Input { .. } => "input",
+            Element::TextArea { .. } => "textarea",
+            Element::Check { .. } => "check",
+            Element::Tab { .. } => "tab",
+            Element::Th { .. } => "th",
+            Element::Td { .. } => "td",
+            Element::Banner { .. } => "banner",
+            Element::Spinner { .. } => "spinner",
+            Element::Divider { .. } => "divider",
+            Element::Progress { .. } => "progress",
+            Element::Modal { .. } => "modal",
+            Element::Raw { .. } => "raw",
+            Element::Fragment { .. } => "",
+        }
+    }
+
+    /// 이 엘리먼트에 적용될 **최종 스타일** (사양서 6.1·6.2).
+    ///
+    /// 태그 셀렉터를 먼저 적용하고, `class`를 나열 순서대로 덮어쓴다
+    /// (뒤가 이김). 색은 팔레트로 확정된 값이라 어댑터가 팔레트를 몰라도 된다.
+    pub fn resolved_style(&self, palette: &crate::style::Palette) -> crate::style::ResolvedStyle {
+        crate::style::resolve(self.class(), self.tag(), palette)
+    }
+
     /// 요소 서브트리의 텍스트 노드들 (헤드리스 테스트의 `text()`/`assert_*` 기반).
     pub fn texts(&self) -> Vec<String> {
         let mut out = Vec::new();

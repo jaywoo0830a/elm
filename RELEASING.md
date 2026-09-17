@@ -1,7 +1,16 @@
 # 릴리스 절차 (Releasing)
 
 crates.io에 **`elm-magic` / `elm-magic-macros` / `elm-magic-egui`** 세 크레이트를
-**순서대로** 배포한다. 버전은 항상 셋이 함께 올라간다. (현재 배포판: 0.1.0 → 다음: 0.5.0)
+**순서대로** 배포한다. 버전은 항상 셋이 함께 올라간다. (배포판: 0.1.0 → 다음: 0.5.0)
+
+> ⚠️ **버전 결정 필요** — 매니페스트는 아직 `0.5.0`인데 트리에는 **v0.6 스타일 작업**이 들어 있다
+> (`CHANGELOG.md`의 `[Unreleased] — v0.6 스타일`, `README.md`의 `v0.6` 절).
+> 둘 중 하나를 고른다:
+>
+> 1. **0.5.0을 먼저 배포** — 스타일 작업 이전 커밋에서: `git tag v0.5.0 d063fb2` (그 커밋의 매니페스트가 0.5.0이다).
+> 2. **0.6.0으로 올려서 배포** — 1번 절의 5곳을 `0.6.0`으로 바꾸고 `CHANGELOG`의 `[Unreleased]`를 `[0.6.0]`으로 옮긴다.
+>
+> 어느 쪽이든 **매니페스트 버전 = 배포 버전**이 되게 맞춘 뒤 진행한다.
 
 ## 0. 준비
 
@@ -27,8 +36,8 @@ cargo search elm-magic # 현재 배포된 버전 확인
 
 ```sh
 # 테스트: 기본(의존성 0) + 전체 기능
-cargo test --workspace                  # 96
-cargo test --workspace --all-features   # 100
+cargo test --workspace                  # 127
+cargo test --workspace --all-features   # 131
 
 # 패키지 검증
 cargo package --allow-dirty -p elm-magic-macros

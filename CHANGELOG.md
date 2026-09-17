@@ -3,6 +3,54 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [Unreleased] — v0.6 스타일
+
+`css!`가 **등록만 하고 렌더링되지 않던** 상태를 끝낸다. egui 어댑터가 스타일을 실제로 적용한다.
+
+### Added — 타입 있는 스타일 (사양서 6.1)
+
+- `StyleSpec`(선언: 팔레트 해석 전) / `ResolvedStyle`(확정: 색까지 해석) 2단 구조.
+  해석이 egui를 모르므로 **스타일 계약 대부분이 헤드리스 테스트**로 검증된다
+- `Palette` + `Token` 8종(`primary` `on_primary` `surface` `background` `text` `text_dim` `error` `warn`),
+  `Color`, `Edges`(1·2·4값 숏핸드), `Element::tag()`, `Element::resolved_style(&Palette)`
+- `style::lookup_class` / `lookup_tag` / `resolve` — 캐스케이드는 **태그 < 클래스(나열 순서, 뒤가 이김)**
+
+### Added — egui 적용 (6개 태그, 9개 속성)
+
+- 태그: `Col` `Row` `Text` `Strong` `Button` `Banner`
+- 속성: `gap` `padding` `margin` `bg` `color` `radius` `font-size` `weight` `text-decoration`
+- `render_with_palette(ui, tree, arena, &theme)` — 기본은 egui 밝기에 따라 `Palette::dark()/light()`
+- `Pass::styles` — 스타일이 적용된 엘리먼트를 기록해 어댑터 테스트가 검증할 수 있다
+- `<Banner>` 기본 색이 하드코딩 RGB에서 **팔레트 토큰**(`error`/`warn`/`primary`)으로 바뀌어 테마를 따른다
+
+### Added — `class` 속성 정합성
+
+- `IntoClasses` 트레이트: `class={문자열}` / `{String}` / `{Vec<String>}` / `{Vec<&str>}` / `{[&str; N]}`
+  → 사양서 6.2의 `class={if error { "error" } else { "ok" }}`가 이제 컴파일된다
+
+### Fixed — `css!` 정합성 (테스트 우선)
+
+- **클래스 규약 통일**: `css!`는 `.card`(점 포함)로 등록하는데 `Element::class`와 테스트 셀렉터는 `"card"`를
+  썼다 → `lookup(".card")` ≡ `lookup("card")`. 태그/클래스는 **키 공간을 분리**해
+  `button { … }`(태그)와 `.button { … }`(클래스)가 서로를 덮지 않는다
+- **`class="a b"`가 매칭 불가**였다: `vec!["a b"]` 하나로 들어가 어떤 셀렉터와도 안 맞던 것을 공백 분리
+- **조용한 무시 제거**: 모르는 속성, `:` 없는 선언, 값 종류 불일치, 한 블록 안의 중복 셀렉터/속성이
+  모두 **컴파일 에러**가 되었다 (지원 목록을 메시지에 보여준다)
+- 태그 셀렉터는 대소문자를 무시한다 (`Button` ≡ `button`)
+
+### Tests
+
+- `tests/style.rs` 신규 (16) — 캐스케이드·팔레트·숏핸드·태그·`IntoClasses`
+- `tests/css.rs` 3 → 12 — 규약 통일·다중 클래스·조건부 클래스·**토큰 어휘 대조**
+- `crates/elm-magic-egui/tests/adapter.rs` 3 → 8 — 페인트 명령에 배경색이 실제로 칠해지는지까지 확인
+- `cargo test` = **126개**, `cargo test --workspace --all-features` = **130개**
+
+### Known limitations
+
+- 스타일 적용 태그 6개 / 속성 9개만 (`Tab` `Th` `Td` `Input` 등은 아직 무시)
+- `:hover` / `:focus` / `:disabled` 상태 셀렉터, 자식·후손 셀렉터, CSS 상속·스펙티시티 없음
+- `css!` 등록은 `.init_array` ctor — wasm은 다른 메커니즘 필요
+
 ## [0.5.0] — 2026-09-17
 
 사양서의 v0.5 마일스톤(전역 상태 · keyed 트리 · 구독 · 콜백 prop)에

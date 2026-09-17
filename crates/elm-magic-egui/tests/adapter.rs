@@ -125,3 +125,115 @@ fn raw_escape_hatch_receives_egui_ui() {
         "raw widget must not be treated as a button"
     );
 }
+// ── v0.6 css! → egui 스타일 적용 (사양서 6.1) ────────────────
+
+use elm_magic::style::{Color, Edges, Palette, Token};
+
+elm_magic::css! {
+    .egui_card { gap: 8; padding: 16; bg: surface; radius: 8; }
+    .egui_loud { color: error; font-size: 20; weight: bold; }
+}
+
+elm_magic::view! {
+    fn Styled() {
+        <Col class="egui_card">
+            <Text class="egui_loud">"styled"</Text>
+            <Button>"go"</Button>
+        </Col>
+    }
+}
+
+/// 페인트 명령에 등장한 사각형 채움색들
+fn painted_rect_fills(out: &egui::FullOutput) -> Vec<egui::Color32> {
+    out.shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) => Some(rect.fill),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rgb(color: Color) -> egui::Color32 {
+    egui::Color32::from_rgb(color.r, color.g, color.b)
+}
+
+#[test]
+fn egui_applies_container_style() {
+    let mut app = elm_magic::mount::<Styled>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+    let (tag, style) = pass
+        .styles
+        .iter()
+        .find(|(tag, _)| *tag == "col")
+        .expect("Col 스타일이 적용됐다");
+    assert_eq!(*tag, "col");
+    assert_eq!(style.gap, Some(8.0));
+    assert_eq!(style.padding, Some(Edges::splat(16.0)));
+    assert_eq!(style.radius, Some(8.0));
+    assert_eq!(style.bg, Some(Palette::dark().get(Token::Surface)));
+}
+
+#[test]
+fn egui_applies_text_style() {
+    let mut app = elm_magic::mount::<Styled>();
+    let ctx = egui::Context::default();
+    let (out, pass) = frame(&ctx, &mut app, input());
+    let (_, style) = pass
+        .styles
+        .iter()
+        .find(|(tag, _)| *tag == "text")
+        .expect("Text 스타일이 적용됐다");
+    assert_eq!(style.color, Some(Palette::dark().get(Token::Error)));
+    assert_eq!(style.font_size, Some(20.0));
+    assert_eq!(style.bold, Some(true));
+    // 굵은 글자는 실제로 그려진다
+    assert!(painted_text(&out).contains("styled"), "{:?}", painted_text(&out));
+}
+
+#[test]
+fn egui_paints_styled_background() {
+    let mut app = elm_magic::mount::<Styled>();
+    let ctx = egui::Context::default();
+    let (out, _) = frame(&ctx, &mut app, input());
+    let want = rgb(Palette::dark().get(Token::Surface));
+    let fills = painted_rect_fills(&out);
+    assert!(fills.contains(&want), "surface 배경이 칠해져야 한다: {fills:?}");
+}
+
+#[test]
+fn egui_unstyled_tree_records_no_styles() {
+    let mut app = elm_magic::mount::<Counter>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+    assert!(pass.styles.is_empty(), "class가 없으면 스타일 기록도 없다");
+}
+
+#[test]
+fn egui_theme_palette_overrides_default() {
+    // 사양서 6.3 — 테마(팔레트)를 갈아끼우면 색이 따라온다
+    let mut app = elm_magic::mount::<Styled>();
+    let ctx = egui::Context::default();
+    let theme = Palette::dark().with(Token::Surface, Color::rgb(1, 2, 3));
+    let tree = app.element().clone();
+    let mut pass = None;
+    let raw = ctx.run_ui(input(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            pass = Some(elm_magic_egui::render_with_palette(
+                ui,
+                &tree,
+                &mut app.ctx.arena,
+                &theme,
+            ));
+        });
+    });
+    let mut out = raw;
+    out.textures_delta.clear();
+    let pass = pass.expect("adapter did not run");
+    let (_, style) = pass.styles.iter().find(|(tag, _)| *tag == "col").expect("col");
+    assert_eq!(style.bg, Some(Color::rgb(1, 2, 3)));
+    let want = egui::Color32::from_rgb(1, 2, 3);
+    let fills = painted_rect_fills(&out);
+    assert!(fills.contains(&want), "테마 색으로 칠해져야 한다: {fills:?}");
+}

@@ -6,7 +6,7 @@ Rust의 타입 시스템을 유지하면서, 매크로로 문법을 JS/JSX처럼
 초경량 순수 함수형 UI 라이브러리. (사양서: `prototype/prototypes/spec.md`)
 (구현 현황 · 미구현 목록: `prototype/prototypes/implementation-status.md`)
 
-현재 버전: **0.5.0** — 변경 내역은 [`CHANGELOG.md`](CHANGELOG.md).
+현재 버전: **0.5.0** · `v0.6` 스타일 작업은 **미배포** — 변경 내역은 [`CHANGELOG.md`](CHANGELOG.md).
 
 ## 설치
 
@@ -85,7 +85,8 @@ fn main() {
 
 라이프사이클(v0.2/v0.4): `on_mount { ... }`, `on_key("Ctrl+S") { ... }`,
 `on_tick(500ms) { ... }`, `on_change(x) after 300ms { ... }`(디바운스),
-`on_change(x) { ... }`(즉시 감시 — `x`는 `Clone + PartialEq` 필요). 스타일: `css!`.
+`on_change(x) { ... }`(즉시 감시 — `x`는 `Clone + PartialEq` 필요). 스타일: `css!` — 등록뿐 아니라
+**렌더링**까지 연결된다(v0.6, 미배포).
 
 플랫폼(v0.3): `elm_magic::run(Headless, App)` — 플랫폼은 인자. egui 어댑터는
 별도 크레이트 `elm-magic-egui`(`render(ui, &tree, &mut arena)`).
@@ -130,6 +131,86 @@ cargo test --workspace --all-features       # serde 스냅샷 포함, 100개
 | `{items.map(\|t\| <Row>...)}` | `into_elements((state.clone()).into_iter().map(...))` — 소유 반복 |
 | `{if x { A } else { B }}` | 분기마다 `into_elements(..)` → `Vec<Element>` 통일 (본문이면 `into_element` → `Fragment`) |
 | `<Counter start=0 />` | 인라인 렌더 + 슬롯 베이스 오프셋 (`SLOTS`) |
+
+## v0.6 — 스타일 (사양서 6.1 · 6.2 · 6.3) · 미배포
+
+`css!`가 **등록만 하고 아무것도 그리지 않던** 상태를 벗어나 실제 렌더링까지 연결했다.
+
+| 이전 | 지금 |
+|---|---|
+| `css!`가 문자열 `(key, value)` 쌍으로 등록 | **컴파일타임 검증** + 타입 있는 `StyleSpec` |
+| 렌더러가 `class`를 완전히 무시 | egui 어댑터가 6개 태그에 실제 적용 |
+| `lookup(".card")`만 동작 (`Element::class`는 `"card"`) | **`.card` ≡ `card`**, 태그/클래스 키 공간 분리 |
+| `class="a b"` → `vec!["a b"]` (어떤 셀렉터와도 불일치) | **공백으로 나눠 여러 클래스** |
+| `class={조건부}`가 컴파일 실패 | `IntoClasses`로 **문자열/목록/조건부** 전부 |
+| 모르는 속성이 조용히 버려짐 | **컴파일 에러** (지원 목록을 보여준다) |
+
+### 문법
+
+```rust
+elm_magic::css! {
+    .app    { gap: 16; padding: 24; }                  // 숫자 1개 / 2·4개 숏핸드
+    .card   { gap: 8; padding: 8 16; bg: surface; radius: 8; }
+    .muted  { color: text_dim; }
+    .done   { color: text_dim; text-decoration: line-through; }
+    button  { bg: primary; color: on_primary; radius: 6; }   // 태그 셀렉터
+    h1      { font-size: 24; weight: bold; }                 // 태그는 대소문자 무시
+}
+
+elm_magic::view! {
+    fn App(dark = false) {
+        <Col class="app">
+            <Row class="card">
+                <Text class={if dark { "muted" } else { "" }}>"hello"</Text>
+                <Button>"go"</Button>
+            </Row>
+        </Col>
+    }
+}
+```
+
+### 속성 9개
+
+| 속성 | 값 | egui |
+|---|---|---|
+| `gap` | 숫자 | `item_spacing` (`Col`은 y, `Row`는 x) |
+| `padding` | `16` / `8 16` / `8 16 4 2` | `Frame::inner_margin` |
+| `margin` | 같음 (음수 허용) | `Frame::outer_margin` |
+| `bg` | 팔레트 토큰 | `Frame::fill` / `Button::fill` |
+| `color` | 팔레트 토큰 | `RichText::color` |
+| `radius` | 숫자 | `Frame::corner_radius` |
+| `font-size` | 숫자 | `RichText::size` |
+| `weight` | `bold` / `normal` | `RichText::strong` |
+| `text-decoration` | `none` / `line-through` / `underline` | `RichText::strikethrough` / `underline` |
+
+값은 `16px`처럼 단위를 붙여도 된다.
+
+### 팔레트 토큰 8개 (사양서 6.3)
+
+`primary` · `on_primary` · `surface` · `background` · `text` · `text_dim` · `error` · `warn`
+
+어댑터는 egui의 밝기(`Visuals::dark_mode`)에 따라 `Palette::dark()` / `Palette::light()`를 고르고,
+`render_with_palette(ui, tree, arena, &theme)`로 직접 지정할 수도 있다 —
+**테마는 팔레트**라는 사양서 6.3의 형태다.
+
+### 우선순위 (캐스케이드)
+
+태그 셀렉터 < 클래스 (나열 순서, **뒤가 이김**). 겹치는 속성만 덮어쓰고 나머지는 남는다.
+CSS 상속·스펙티시티는 없다 — 요청한 클래스들의 선언만 합친다.
+
+### 스타일이 적용되는 태그 (v0.6: 6개)
+
+`Col` `Row` `Text` `Strong` `Button` `Banner` — 나머지 태그의 `class`는 아직 무시된다.
+
+### 검증
+
+해석(`ResolvedStyle`)은 egui를 모르는 값이라 **스타일 계약 대부분이 헤드리스 테스트**로 덮인다.
+
+| 파일 | 개수 | 내용 |
+|---|---|---|
+| `tests/style.rs` | 16 | 캐스케이드·팔레트·숏핸드·태그·`IntoClasses` |
+| `tests/css.rs` | 12 | 등록·토큰 어휘 대조·`class` 속성 정합성 |
+| `crates/elm-magic-egui/tests/adapter.rs` | +5 | 페인트 명령에 배경색이 실제로 칠해지는지까지 확인 |
 
 ## v0.5 — 전역 상태 · keyed 트리 · 구독 · 콜백 prop
 
@@ -387,6 +468,22 @@ elm_magic::view! {
   타입이 다르면 런타임 panic.
 - 구독(`on_message`)은 **인스턴스당 한 번**만 등록된다(재구독은 unmount 후 재마운트로).
 - keyed 경로는 문자열(`"/<key>/@<n>#<slot>"`)이다 — 성능 최적화(해시/u32 경로)는 다음 과제.
+
+## v0.6 제한
+
+- **스타일이 적용되는 태그는 6개**다 (`Col` `Row` `Text` `Strong` `Button` `Banner`).
+  `Tab` `Th` `Td` `Input` `TextArea` `Check` `Spinner` `Divider` `Progress` `Modal` `Raw`의 `class`는 아직 무시된다.
+- **속성 9개**만 지원한다. `border` `shadow` `min-width` `max-width` `cursor` `line-height` `font-family`,
+  그리고 `:hover` / `:focus` / `:disabled` 같은 상태 셀렉터는 다음 단계다.
+- **자식·후손 셀렉터가 없다** — `.card Button` 같은 형태는 지원하지 않는다 (태그 + 클래스만).
+- **CSS 상속·스펙티시티가 없다** — 부모 스타일이 자식으로 내려가지 않는다.
+- `css!`는 **`.init_array` ctor**로 등록한다 (ELF/Mach-O 전용). 실측:
+  최종 바이너리가 그 크레이트 심볼을 **하나라도** 참조하면 (다른 모듈이어도) 실행되고,
+  아무것도 참조하지 않으면 rlib 객체가 링크되지 않아 등록도 없다 (안 쓰는 라이브러리 = 스타일도 없음).
+  wasm은 다른 메커니즘이 필요하다 (사양서 6.1의 `StyleId(u32)` 인터닝·정수 비교도 미구현).
+- 같은 셀렉터를 **여러 `css!` 블록**에서 선언하면 첫 등록이 이긴다 (한 블록 안의 중복은 컴파일 에러).
+- 팔레트 토큰 목록이 매크로(`css.rs::TOKENS`)와 코어(`Token::ALL`)에 **중복**되어 있다
+  (`tests/css.rs::css_token_vocabulary_matches_core`가 어긋남을 잡는다).
 
 디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` / `store` 전개 코드를 그대로 볼 수 있다
 (사양서 13장의 "`cargo expand` 필수" 항목 대체).

@@ -1825,21 +1825,26 @@ fn attr_string(attrs: &[(String, AttrVal)], key: &str, default: &str) -> String 
     }
 }
 
+/// `class` 속성 → `Vec<String>` 표현식.
+///
+/// - `class="a b"` → 컴파일타임에 공백으로 나눠 **여러 클래스**로 만든다
+///   (예전에는 문자열 하나로 들어가 어떤 셀렉터와도 안 맞았다).
+/// - `class={expr}` → `IntoClasses`가 문자열/목록을 받는다 (사양서 6.2).
 fn class_tokens(attrs: &[(String, AttrVal)]) -> String {
-    let inner = attrs.iter().find_map(|(k, v)| {
-        if k == "class" {
-            Some(match v {
-                AttrVal::Lit(s) => format!("::std::convert::Into::into({:?})", s),
-                AttrVal::Expr(e) => format!("::std::convert::Into::into({})", e),
-                AttrVal::Flag => "::std::convert::Into::into(\"\")".to_string(),
-            })
-        } else {
-            None
+    let value = attrs.iter().find_map(|(k, v)| if k == "class" { Some(v) } else { None });
+    match value {
+        Some(AttrVal::Lit(s)) => {
+            let parts: Vec<String> = s
+                .split_whitespace()
+                .map(|p| format!("::std::string::String::from({:?})", p))
+                .collect();
+            format!("::std::vec![{}]", parts.join(", "))
         }
-    });
-    match inner {
-        Some(x) => format!("::std::vec![{}]", x),
-        None => "::std::vec![]".to_string(),
+        Some(AttrVal::Expr(e)) => {
+            format!("::elm_magic::style::IntoClasses::into_classes({})", e)
+        }
+        // `class`가 없거나 플래그만 있으면 빈 목록
+        _ => "::std::vec![]".to_string(),
     }
 }
 
