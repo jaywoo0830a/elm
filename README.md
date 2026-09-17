@@ -13,6 +13,14 @@ Rust의 타입 시스템을 유지하면서, 매크로로 문법을 JS/JSX처럼
 elm-magic = "0.1"
 ```
 
+egui 위에 그리려면 어댑터 크레이트를 함께 추가한다:
+
+```toml
+[dependencies]
+elm-magic = "0.1"
+elm-magic-egui = "0.1"
+```
+
 ## 사용 예
 
 ```rust
