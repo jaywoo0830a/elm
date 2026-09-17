@@ -72,15 +72,18 @@ pub fn expand_fn(input: TokenStream) -> TokenStream {
 
 fn expand_struct(toks: Vec<TokenTree>) -> TokenStream {
     let mut i = 0;
+    // `pub` / `pub(crate)` / `pub(super)` / `pub(in path)` — 그룹 내용까지 보존한다.
     let mut vis = String::new();
     if matches!(toks.get(i), Some(TokenTree::Ident(id)) if id.to_string() == "pub") {
-        vis = "pub ".to_string();
+        vis = "pub".to_string();
         i += 1;
         if let Some(TokenTree::Group(g)) = toks.get(i) {
             if g.delimiter() == Delimiter::Parenthesis {
+                vis.push_str(&format!("({})", g.stream()));
                 i += 1;
             }
         }
+        vis.push(' ');
     }
     if !matches!(toks.get(i), Some(TokenTree::Ident(id)) if id.to_string() == "struct") {
         panic!("elm-magic: #[store] expects `struct Name {{ field: Type, ... }}`");

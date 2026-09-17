@@ -91,17 +91,20 @@ pub fn expand(item: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = item.into_iter().collect();
     let mut i = 0;
 
-    // visibility
+    // visibility — `pub`, `pub(crate)`, `pub(super)`, `pub(in path)` 모두 보존한다.
+    // (`pub(crate)` 그룹을 버리면 의미가 `pub`으로 넓어진다.)
     let mut vis = String::new();
     if let Some(TokenTree::Ident(id)) = toks.get(i) {
         if id.to_string() == "pub" {
-            vis = "pub ".to_string();
+            vis = "pub".to_string();
             i += 1;
             if let Some(TokenTree::Group(g)) = toks.get(i) {
                 if g.delimiter() == Delimiter::Parenthesis {
+                    vis.push_str(&format!("({})", g.stream()));
                     i += 1;
                 }
             }
+            vis.push(' ');
         }
     }
 
@@ -301,8 +304,9 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     let total_slots = slot_cell.get();
 
     let mut head = String::new();
+    // `vis`는 `struct` 앞에만 — `#[derive(..)]` 앞에 찍으면 `pub #[derive(..)]`가 된다.
     head.push_str(&format!(
-        "{v}#[derive(::core::clone::Clone)]\n{v}struct {n}Props {{\n",
+        "#[derive(::core::clone::Clone)]\n{v}struct {n}Props {{\n",
         v = vis,
         n = fn_name
     ));

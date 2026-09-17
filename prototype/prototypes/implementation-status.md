@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: 테스트 36개 → v0.4: 64개 → **v0.5: 90개 통과**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5: 90개 → **v0.5.1: 96개 통과**
 
 ---
 
@@ -120,6 +120,24 @@ rustc --edition 2021 --test --emit=metadata \
 | 문자열 보간 `{x}` + `{x:?}` / `{x:.2}` | 사양서 예제의 Debug 출력 |
 | `Element::Col/Row`의 `on_click`, `Element::texts()/subtree_text()` | `<Row on_click>` 클릭 (헤드리스 + egui) |
 | `elm_magic::clone_value` / `nav_take` | 콜백·라우팅에서 호출부 타입 추론이 되도록 (`_elm_v.clone()`은 추론 실패) |
+
+---
+
+## 2.7 v0.5.1 — 버그 리포트 3건 ✅ (테스트 우선)
+
+`elm-magic-bug-report.md`(FreeDF 채택 과정)의 3건을 **재현 테스트 먼저**(`tests/bug_report.rs`, 6개)로
+고정하고 수정했다. 세 건 모두 리포트의 재현 코드가 그대로 `cargo test`에서 돌아간다.
+
+| # | 증상 | 원인 | 수정 위치 |
+|---|---|---|---|
+| 1 | `pub fn` / `pub(crate) fn` 컴포넌트가 `visibility pub is not followed by an item` / `macro expansion ignores #` | `vis`가 `#[derive(Clone)]` **앞**에도 찍혀 `pub #[derive(..)]`가 됐고, `pub(crate)`의 괄호 그룹은 파싱에서 버려져 `pub`으로 넓어졌다 | `view.rs::expand`(vis 그룹 보존) + head 생성부(`vis`는 `struct` 앞에만), `store.rs::expand_struct` 동일 |
+| 2 | `on_click={items.remove(x), n = 1}` → `expected expression, found ','` | `remove(비정수)`(`retain`) 특수 폼이 문장 종료자(`;`/`,`)를 소비하지 않아 `,`가 그대로 남았다 (대입·일반 메서드는 소비함) | `jsx.rs::transform_event` — 특수 폼 뒤 `;`/`,` 소비 후 `;` 재방출 |
+| 3 | `{if ..}` 식 안 지역 컬렉션 `.iter().map(..)` → `E0716` | 슈가는 **상태 슬롯**(`substitute_read`)만 소유 반복으로 전개 — 렌더 본문의 지역 `let` 변수는 건드리지 않았다 | `jsx.rs::local_iter_sugar` — 상태가 아닌 식별자 `x.iter().map(..)` → `(x).clone().into_iter().map(..)` |
+
+### 남은 것 (변동 없음)
+
+- 아이템 필드 대입 `t.done = !t.done`(인덱스 추적), 아이템당 핸들러 2개 이상(`Rc` 바인딩) — 우선순위 8.
+- 어휘 2차 확장(우선순위 9) · 서비스 객체/`#[view]`(10) · 플랫폼(11) · 스냅샷(12).
 
 ---
 

@@ -76,6 +76,7 @@ crates/elm-magic-macros/
 └── src/lib.rs    # 매크로 진입점
 tests/            # counter todo effects lifecycle css mock stream raw platform
                   # syntax timers widgets sugar store subs callbacks
+                  # integration bug_report (elm-magic-bug-report.md 회귀)
 ```
 
 ## 테스트
@@ -357,6 +358,44 @@ elm_magic::view! {
 
 디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` / `store` 전개 코드를 그대로 볼 수 있다
 (사양서 13장의 "`cargo expand` 필수" 항목 대체).
+
+## v0.5.1 — 버그 리포트 3건 수정 (테스트 우선)
+
+`elm-magic-bug-report.md`의 3건을 재현 테스트(`tests/bug_report.rs`, 6개)로 먼저 고정한 뒤 수정했다.
+
+| # | 증상 | 원인 | 수정 |
+|---|---|---|---|
+| 1 | `pub fn` / `pub(crate) fn` 컴포넌트가 `visibility pub is not followed by an item` | `vis`가 `#[derive(..)]` **앞**에도 찍혀 `pub #[derive(..)]`가 되었고, `pub(crate)` 그룹은 버려졌다 | `vis`는 `struct` 앞에만, `pub(crate)`/`pub(super)`/`pub(in path)` 그룹 내용까지 보존 (`view.rs`, `store.rs` 동일 수정) |
+| 2 | `on_click={items.remove(x), n = 1}`이 `expected expression, found ','` | `remove(x)`(`retain`) 특수 폼 전개가 문장 종료자(`;`/`,`)를 소비하지 않아 `,`가 그대로 남았다 | 특수 폼 뒤에서 `;`/`,`를 소비하고 `;`로 재방출 (`jsx.rs::transform_event`) |
+| 3 | `{if ..}` 식 안 지역 컬렉션의 `.iter().map(..)`에서 `E0716` | 슈가가 **상태 슬롯**만 소유 반복으로 전개하고 지역 `let` 변수는 건드리지 않았다 | 상태가 아닌 식별자의 `x.iter().map(..)`도 `(x).clone().into_iter().map(..)`로 전개 (`jsx.rs::local_iter_sugar`) |
+
+```rust
+// 이제 모두 그대로 컴파일·동작한다
+elm_magic::view! {
+    pub fn Badge(count = 0) { <Row>"count: {count}"</Row> }
+}
+
+elm_magic::view! {
+    fn T(items: Vec<String> = vec![], n = 0) {
+        // `remove(x)` 뒤에 다른 문장이 와도 된다 (버그 2)
+        <Button on_click={items.remove(String::from("a")), n = 1}>"go"</Button>
+    }
+}
+
+elm_magic::view! {
+    fn S(open = true, status = String::new()) {
+        let sections = ["Notes", "PDFs"];
+        <Col>
+            {if open {
+                {sections.iter().map(|s| <Row on_click={status = format!("{}", s)}>"{s}"</Row>)}
+            } else { <Text>"none"</Text> }}
+            "status: {status}"
+        </Col>
+    }
+}
+```
+
+여전히 남은 v0.5 제한(아이템 필드 대입 `t.done = !t.done`, 아이템당 핸들러 2개 이상)은 그대로다.
 
 전체 현황: `prototype/prototypes/implementation-status.md`
 

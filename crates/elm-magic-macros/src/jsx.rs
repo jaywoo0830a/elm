@@ -434,6 +434,51 @@ fn substitute_read(toks: &[TokenTree], i: usize, _env: &Env, arena: &str) -> (To
     (out, i + 1)
 }
 
+/// 지역 컬렉션의 `.iter().map(..)` 슈가: `x.iter().map(..)` →
+/// `(x).clone().into_iter().map(..)`.
+///
+/// 상태 슬롯은 [`substitute_read`]가 처리하므로 여기서는 **상태가 아닌**
+/// 식별자(렌더 본문의 `let` 지역 변수)만 대상으로 한다. `&T`를 `'static`
+/// 핸들러에 캡처할 수 없어(E0716) 소유 반복으로 바꾼다 (사양서 3.3).
+///
+/// `clone`을 거치는 이유: 지역 변수를 나중에 다시 쓸 수 있어야 하기 때문
+/// (상태 슬롯 슈가가 `.clone()`을 하는 것과 같은 이유).
+fn local_iter_sugar(toks: &[TokenTree], i: usize, env: &Env) -> Option<(TokenStream, usize)> {
+    let name = match &toks[i] {
+        TokenTree::Ident(id) => id.to_string(),
+        _ => return None,
+    };
+    if env.states.contains(&name) || is_field_access(toks, i) {
+        return None;
+    }
+    // `name . iter ( ) . map`
+    match (
+        toks.get(i + 1),
+        toks.get(i + 2),
+        toks.get(i + 3),
+        toks.get(i + 4),
+        toks.get(i + 5),
+    ) {
+        (
+            Some(TokenTree::Punct(d1)),
+            Some(TokenTree::Ident(m1)),
+            Some(TokenTree::Group(g)),
+            Some(TokenTree::Punct(d2)),
+            Some(TokenTree::Ident(m2)),
+        ) if d1.as_char() == '.'
+            && m1.to_string() == "iter"
+            && g.delimiter() == Delimiter::Parenthesis
+            && g.stream().is_empty()
+            && d2.as_char() == '.'
+            && m2.to_string() == "map" =>
+        {
+            let out = parse_ts(&format!("({}).clone().into_iter().map", name));
+            Some((out, i + 6))
+        }
+        _ => None,
+    }
+}
+
 
 pub fn transform_top(toks: &[TokenTree], env: &Env) -> TokenStream {
     transform_children(toks, env, ';')
@@ -892,6 +937,12 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
         }
         if let TokenTree::Ident(id) = &toks[i] {
             let name = id.to_string();
+            // 지역 컬렉션의 `.iter().map(..)` 슈가 (E0716 방지)
+            if let Some((ts, next)) = local_iter_sugar(toks, i, env) {
+                out.extend(ts);
+                i = next;
+                continue;
+            }
             // field key (`name:`) and field access (`.name`) stay verbatim
             let is_field_key = matches!(toks.get(i + 1), Some(TokenTree::Punct(p))
                 if p.as_char() == ':' && p.spacing() == Spacing::Alone);
@@ -1396,6 +1447,15 @@ fn transform_event(
                                     };
                                     out.extend(parse_ts(&emitted));
                                     i += 4;
+                                    // 문장 종료자(`;`/`,`)를 소비한다 — 컴마 다중문용.
+                                    // (소비하지 않으면 뒤 문장과의 사이에 `,`가 그대로 남아
+                                    //  `expected expression, found ','`가 된다.)
+                                    if let Some(TokenTree::Punct(p)) = toks.get(i) {
+                                        if matches!(p.as_char(), ';' | ',') {
+                                            out.push(punct(';'));
+                                            i += 1;
+                                        }
+                                    }
                                     continue;
                                 }
                                 // args가 상태를 참조할 때만 미리 계산한다(아레나 이중 차용 방지).
