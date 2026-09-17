@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5: 90개 → **v0.5.1: 96개(기본) / 100개(`--all-features`)**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → **v0.5.0: 96개(기본) / 100개(`--all-features`)**
 
 ---
 
@@ -123,7 +123,7 @@ rustc --edition 2021 --test --emit=metadata \
 
 ---
 
-## 2.7 v0.5.1 — 버그 리포트 3건 ✅ (테스트 우선)
+## 2.7 v0.5 — 버그 리포트 3건 ✅ (테스트 우선)
 
 `elm-magic-bug-report.md`(FreeDF 채택 과정)의 3건을 **재현 테스트 먼저**(`tests/bug_report.rs`, 6개)로
 고정하고 수정했다. 세 건 모두 리포트의 재현 코드가 그대로 `cargo test`에서 돌아간다.

@@ -6,19 +6,21 @@ Rust의 타입 시스템을 유지하면서, 매크로로 문법을 JS/JSX처럼
 초경량 순수 함수형 UI 라이브러리. (사양서: `prototype/prototypes/spec.md`)
 (구현 현황 · 미구현 목록: `prototype/prototypes/implementation-status.md`)
 
+현재 버전: **0.5.0** — 변경 내역은 [`CHANGELOG.md`](CHANGELOG.md).
+
 ## 설치
 
 ```toml
 [dependencies]
-elm-magic = "0.1"
+elm-magic = "0.5"
 ```
 
 egui 위에 그리려면 어댑터 크레이트를 함께 추가한다:
 
 ```toml
 [dependencies]
-elm-magic = "0.1"
-elm-magic-egui = "0.1"
+elm-magic = "0.5"
+elm-magic-egui = "0.5"
 ```
 
 ## 의존성 정책 — 기본은 0, `serde`만 선택적
@@ -28,7 +30,7 @@ elm-magic-egui = "0.1"
 
 ```toml
 [dependencies]
-elm-magic = { version = "0.1", features = ["serde"] }
+elm-magic = { version = "0.5", features = ["serde"] }
 ```
 
 ```sh
@@ -389,7 +391,7 @@ elm_magic::view! {
 디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` / `store` 전개 코드를 그대로 볼 수 있다
 (사양서 13장의 "`cargo expand` 필수" 항목 대체).
 
-## v0.5.1 — 버그 리포트 3건 수정 (테스트 우선)
+## v0.5 버그 픽스 — 리포트 3건 (테스트 우선)
 
 `elm-magic-bug-report.md`의 3건을 재현 테스트(`tests/bug_report.rs`, 6개)로 먼저 고정한 뒤 수정했다.
 
@@ -428,4 +430,5 @@ elm_magic::view! {
 여전히 남은 v0.5 제한(아이템 필드 대입 `t.done = !t.done`, 아이템당 핸들러 2개 이상)은 그대로다.
 
 전체 현황: `prototype/prototypes/implementation-status.md`
+변경 내역: `CHANGELOG.md`
 

@@ -3,7 +3,7 @@ members = ["crates/elm-magic-macros", "crates/elm-magic-egui"]
 
 [package]
 name = "elm-magic"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 description = "State is a variable, events are assignment, the screen is the function body. A lightweight pure-functional UI library disguised as JS/JSX via macros."
 license = "MIT"
@@ -11,9 +11,12 @@ readme = "README.md"
 repository = "https://github.com/jaywoo0830a/elm"
 keywords = ["ui", "gui", "jsx", "elm", "macros"]
 categories = ["gui", "rust-patterns"]
+# 배포 크레이트에서 제외 — 저장소에는 그대로 남는다.
+# (버그 리포트는 외부 프로젝트 문서라 크레이트에 담지 않는다.)
+exclude = ["/elm-magic-bug-report.md"]
 
 [dependencies]
-elm-magic-macros = { path = "crates/elm-magic-macros", version = "0.1.0" }
+elm-magic-macros = { path = "crates/elm-magic-macros", version = "0.5.0" }
 # 선택적 의존성 — 사양서 8.3의 "뷰는 직렬화 가능"(`Element: Serialize`) 계약.
 # 기본 빌드는 여전히 외부 의존성 0 (초경량 유지).
 serde = { version = "1", features = ["derive"], optional = true }
