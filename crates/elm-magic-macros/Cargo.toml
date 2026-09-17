@@ -3,6 +3,11 @@ name = "elm-magic-macros"
 version = "0.1.0"
 edition = "2021"
 description = "Procedural macros for elm-magic: #[view], ui!"
+license = "MIT"
+readme = "../../README.md"
+repository = "https://github.com/jaywoo0830a/elm"
+keywords = ["ui", "gui", "jsx", "elm", "macros"]
+categories = ["gui", "rust-patterns"]
 
 [lib]
 proc-macro = true

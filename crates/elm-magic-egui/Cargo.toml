@@ -2,7 +2,13 @@
 name = "elm-magic-egui"
 version = "0.1.0"
 edition = "2021"
+description = "egui adapter for elm-magic: renders elm-magic Element trees as egui widgets and feeds interactions back to the arena."
+license = "MIT"
+readme = "../../README.md"
+repository = "https://github.com/jaywoo0830a/elm"
+keywords = ["ui", "gui", "egui", "elm", "jsx"]
+categories = ["gui"]
 
 [dependencies]
-elm-magic = { path = "../.." }
+elm-magic = { path = "../..", version = "0.1.0" }
 egui = "0.36"
