@@ -21,6 +21,34 @@ elm-magic = "0.1"
 elm-magic-egui = "0.1"
 ```
 
+## 의존성 정책 — 기본은 0, `serde`만 선택적
+
+기본 빌드는 **외부 의존성 0**이다(`cargo tree -p elm-magic -e normal` → `elm-magic-macros`뿐).
+사양서 8.3의 "뷰는 직렬화 가능"(`Element: Serialize`)은 선택 기능으로 제공한다:
+
+```toml
+[dependencies]
+elm-magic = { version = "0.1", features = ["serde"] }
+```
+
+```sh
+cargo test -p elm-magic --features serde   # tests/snapshot.rs
+```
+
+`Element`(과 `StyleProps`)가 `Serialize`를 얻는다. 핸들러(`Rc<dyn Fn>`)와 `<Raw>` 클로저는
+`#[serde(skip)]`으로 빠지고 **구조·텍스트·클래스만** 직렬화되므로, `render_tree()`(사람용 텍스트)와
+달리 기계가 비교하는 스냅샷(insta 등)에 쓸 수 있다.
+
+**나머지 3종은 넣지 않는다** — 이 설계에는 맞지 않는다(근거는
+`prototype/prototypes/implementation-status.md` 2.8절):
+
+| 라이브러리 | 판단 | 근거 |
+|---|---|---|
+| `serde` | ✅ 선택 기능 | 사양서 8.3의 직렬화 계약. `#[cfg_attr(feature = "serde", …)]`로 기본 그래프를 건드리지 않음 |
+| `thiserror` | ❌ | 공개 API가 **panic 기반**이다(매크로 사용 오류를 명확한 한국어 메시지로 즉시 실패). 반환형 `Result`가 없어 `#[derive(Error)]`를 넣어도 `panic!("{}", e)`로 감싸는 코드만 늘어난다 |
+| `enum_dispatch` | ❌ | `Element`는 데이터 enum이고 핸들러는 **클로저**(고유 타입)라 dispatch 대상 트레이트가 없다. 도입하려면 variant를 구조체로 바꾸고 `testing.rs`/egui 어댑터/테스트의 패턴 매칭을 전부 갈아엎어야 하는데, 단순화가 아니라 순수 비용이다 |
+| `tokio` | ❌ | `<-` 효과는 `Future + 'static`(**`Send` 아님**)이고 테스트는 동기(`flush`) 모델이다. tokio를 넣으면 `Send` 요구와 런타임이 따라온다. 현재 `runtime::block_on`은 noop waker 스핀이라 **진짜 I/O future에는 부적합**하지만, 그건 tokio가 아니라 설계 결정(="headless는 즉시 완료되는 future만")의 문제다 |
+
 ## 사용 예
 
 ```rust
@@ -77,12 +105,14 @@ crates/elm-magic-macros/
 tests/            # counter todo effects lifecycle css mock stream raw platform
                   # syntax timers widgets sugar store subs callbacks
                   # integration bug_report (elm-magic-bug-report.md 회귀)
+                  # snapshot (`--features serde` — 사양서 8.3 직렬화 계약)
 ```
 
 ## 테스트
 
 ```sh
-cargo test
+cargo test                                  # 기본 — 의존성 0, 96개
+cargo test --workspace --all-features       # serde 스냅샷 포함, 100개
 ```
 
 - 렌더러도 런타임도 없이 순수 함수 호출만으로 UI 로직을 검증한다 (사양서 8.1).

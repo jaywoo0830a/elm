@@ -13,6 +13,7 @@ pub type BoolHandler = Rc<dyn Fn(&mut Arena, bool)>;
 
 /// The view tree. Pure data — same state in, same tree out.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Element {
     Text {
         text: String,
@@ -26,30 +27,37 @@ pub enum Element {
     Col {
         class: Vec<String>,
         children: Vec<Element>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_click: Option<Handler>,
     },
     Row {
         class: Vec<String>,
         children: Vec<Element>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_click: Option<Handler>,
     },
     Button {
         text: String,
         class: Vec<String>,
         disabled: bool,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_click: Option<Handler>,
     },
     Input {
         value: String,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_change: Option<ValueHandler>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_enter: Option<ValueHandler>,
     },
     /// `<TextArea>` — 여러 줄 입력 (Input과 동일한 이벤트 계약)
     TextArea {
         value: String,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_change: Option<ValueHandler>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_enter: Option<ValueHandler>,
     },
     /// `<Check checked={..} on_change={..}>"라벨"</Check>`
@@ -57,6 +65,7 @@ pub enum Element {
         checked: bool,
         label: String,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_change: Option<BoolHandler>,
     },
     /// `<Tab active={..} on_click={..}>"라벨"</Tab>`
@@ -64,12 +73,14 @@ pub enum Element {
         text: String,
         active: bool,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_click: Option<Handler>,
     },
     /// `<Th on_click={..}>` — 표 헤더 셀
     Th {
         text: String,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_click: Option<Handler>,
     },
     /// `<Td>` — 표 본문 셀
@@ -100,6 +111,7 @@ pub enum Element {
     Modal {
         title: String,
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         on_close: Option<Handler>,
         children: Vec<Element>,
     },
@@ -108,6 +120,7 @@ pub enum Element {
     /// invokes it with its own handle (e.g. `&mut egui::Ui`).
     Raw {
         class: Vec<String>,
+        #[cfg_attr(feature = "serde", serde(skip))]
         widget: crate::raw::RawFn,
     },
     /// 뷰 본문/분기가 요소 여러 개를 낼 때의 컨테이너 (`{if ..}`, `{match ..}`).

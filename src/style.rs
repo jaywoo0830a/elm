@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// A registered selector with its property list.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StyleProps {
     selector: String,
     props: Vec<(String, String)>,

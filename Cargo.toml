@@ -14,4 +14,15 @@ categories = ["gui", "rust-patterns"]
 
 [dependencies]
 elm-magic-macros = { path = "crates/elm-magic-macros", version = "0.1.0" }
+# 선택적 의존성 — 사양서 8.3의 "뷰는 직렬화 가능"(`Element: Serialize`) 계약.
+# 기본 빌드는 여전히 외부 의존성 0 (초경량 유지).
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+# `--features serde`로 켠다. `Element` / `StyleProps`가 `Serialize`를 얻는다.
+serde = ["dep:serde"]
+
+[dev-dependencies]
+# 스냅샷 계약 테스트 전용 (사양서 8.3) — 배포 그래프에는 포함되지 않는다.
+serde_json = "1"
 

@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5: 90개 → **v0.5.1: 96개 통과**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5: 90개 → **v0.5.1: 96개(기본) / 100개(`--all-features`)**
 
 ---
 
@@ -137,7 +137,36 @@ rustc --edition 2021 --test --emit=metadata \
 ### 남은 것 (변동 없음)
 
 - 아이템 필드 대입 `t.done = !t.done`(인덱스 추적), 아이템당 핸들러 2개 이상(`Rc` 바인딩) — 우선순위 8.
-- 어휘 2차 확장(우선순위 9) · 서비스 객체/`#[view]`(10) · 플랫폼(11) · 스냅샷(12).
+- 어휘 2차 확장(우선순위 9) · 서비스 객체/`#[view]`(10) · 플랫폼(11) · 스냅샷의 insta 연동(12, `Element: Serialize`는 2.8절에서 완료).
+
+---
+
+## 2.8 의존성 정책 — `serde`만 선택적, 나머지 3종은 넣지 않음
+
+`serde` / `thiserror` / `enum_dispatch` / `tokio` 도입을 검토한 기록.
+**기본 빌드의 외부 의존성은 0**을 유지한다 (`cargo tree -p elm-magic -e normal` → `elm-magic-macros`뿐).
+
+| 라이브러리 | 판단 | 근거 (코드 실측) |
+|---|---|---|
+| `serde` | ✅ **선택 기능** | 사양서 8.3·부록의 "뷰는 직렬화 가능"(`Element: Serialize`). `[features] serde = ["dep:serde"]` + `#[cfg_attr(feature = "serde", derive(serde::Serialize))]`. 핸들러/`<Raw>`는 `#[serde(skip)]` → **구조·텍스트·클래스만** 직렬화. 기본 그래프는 그대로 0 |
+| `thiserror` | ❌ | `src/`+매크로에 `panic!` **54곳**, 공개 API는 panic 기반(매크로 사용 오류를 한국어 메시지로 즉시 실패). 반환형 `Result`/에러 타입이 없어 `#[derive(Error)]`를 넣어도 `panic!("{}", e)` 래핑만 늘어난다 (코드 감소 0) |
+| `enum_dispatch` | ❌ | `Element`는 데이터 enum(패턴 매칭: `element.rs::collect_texts`, `testing.rs::dump`, egui `render_el`)이고 핸들러는 **클로저**(고유 타입)라 위임할 트레이트 대상이 없다. variant를 구조체로 바꾸면 3개 크레이트의 매칭을 전부 갈아엎어야 함 — 단순화가 아니라 비용 |
+| `tokio` | ❌ | `Arena::spawn` 제약은 `F: Future + 'static`(**`Send` 없음**)이고 테스트는 동기 `flush` 모델. `tokio::spawn`은 `Send`를 요구하므로 `Rc` 캡처 future가 깨진다. `runtime::block_on`의 noop-waker 스핀은 진짜 I/O future에 부적합하지만, 그건 **설계 결정**(headless = 즉시 완료 future)이지 라이브러리 교체 문제가 아니다 |
+
+### `serde` 사용법 (사양서 8.3)
+
+```sh
+cargo test -p elm-magic --features serde   # tests/snapshot.rs (4개)
+cargo test --workspace --all-features      # 전체 100개
+```
+
+```rust
+let json = serde_json::to_string(app.element())?;   // 핸들러는 빠진다
+```
+
+- `Element` 전 variant의 `on_click` / `on_change` / `on_enter` / `on_close` / `widget`에 `#[serde(skip)]`
+- `StyleProps`(style.rs)도 직렬화 가능
+- `render_tree()` = 사람이 읽는 텍스트 덤프, `serde` = 기계가 비교하는 스냅샷(insta 등). 둘은 보완 관계
 
 ---
 
@@ -188,7 +217,7 @@ rustc --edition 2021 --test --emit=metadata \
 - keyed 트리, 키 기반 재사용·unmount·초기화: 없음 (슬롯은 `ctx.base` 렌더 순서 오프셋 — `README.md` v0.1 한계에 명시)
 - 사양서 4.4의 `State<T>: Deref / DerefMut` + 아레나 `unsafe` → 실제는 `Any` 다운캐스트 + `get/set/mutate`
 - 사양서 9.1의 `Element<Msg>` + `Msg enum` 정적 디스패치 → 실제는 `Rc<dyn Fn>` 핸들러 (**트리 핫패스에 `dyn` 존재**)
-- `Element: Serialize`, `StyleId(u32)` 인터닝 → 없음 (`Vec<String>` + `HashMap<String, …>`)
+- `Element: Serialize` → ✅ **선택 기능**(`--features serde`, 2.8절) · `StyleId(u32)` 인터닝 → 없음 (`Vec<String>` + `HashMap<String, …>`)
 - `memo!` 매크로 → 없음
 - "조건문 안에서 상태 선언 금지" 같은 컴파일 규칙 검사 → 없음
 
@@ -305,7 +334,7 @@ rustc --edition 2021 --test --emit=metadata \
 | 9 | **어휘 2차 확장** — `Table`, `VirtualList`, `Scroll`, `Plot`, `Dock`, `Window`, `Sidebar`, `Menu/Item`, `Fade`, 소문자/HTML 태그 | 프로토타입 `2.rs` 대부분 |
 | 10 | **서비스 객체 + `#[view]` 속성 매크로** — `ws`/`api`/`cache`, `#[view] fn …` 문법 | 사양서 표면 문법과의 마지막 차이 |
 | 11 | **플랫폼 확장** — `Desktop`/`Web`/`Terminal`, `mount(엘리먼트)`, `memo!`, i18n | 사양서 7장/14장 |
-| 12 | **스냅샷 계약** — `Element: Serialize` + insta | 사양서 8.3 |
+| 12 | **스냅샷 계약** — `Element: Serialize` ✅ **선택 기능**(`--features serde`, 2.8절) + insta | 사양서 8.3 |
 
 ---
 
