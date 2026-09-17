@@ -126,7 +126,7 @@ fn modal_children_are_clickable() {
 #[test]
 fn list_items_render_inside_panel() {
     let app = elm_magic::mount_with::<Panel>(PanelProps {
-        items: vec!["alpha".to_string()],
+        items: Some(vec!["alpha".to_string()]),
         ..Default::default()
     });
     app.assert_text("alpha");

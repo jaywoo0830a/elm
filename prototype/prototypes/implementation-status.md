@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: `git status` clean · 테스트 36개 통과 → **v0.4 반영 후 워크스페이스 테스트 64개 통과**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → **v0.5: 90개 통과**
 
 ---
 
@@ -49,7 +49,7 @@ rustc --edition 2021 --test --emit=metadata \
 
 ## 2.5 v0.4 — 구현 완료 10건 ✅
 
-우선순위 상위 10개(버그 7 + 기능 3)를 구현했다. `cargo test --workspace` = **64개 통과**,
+우선순위 상위 10개(버그 7 + 기능 3)를 구현했다. `cargo test --workspace` = **90개 통과**,
 `tests/{syntax,timers,widgets,sugar}.rs`가 각 항목의 회귀 테스트다.
 
 | # | 항목 | 상태 | 구현 위치 / 사용법 |
@@ -75,11 +75,12 @@ rustc --edition 2021 --test --emit=metadata \
 | `items.iter()` / `items.map(…)`는 **소유 반복** | `&T`를 `'static` 핸들러에 캡처할 수 없어서 (E0716) 사양서 3.3의 "`&` 생략"을 그대로 구현 |
 | 뷰 본문/분기의 값이 `Vec<Element>`면 `Fragment`로 감싼다 | `fn App() { {if ..} }`처럼 본문 전체가 조건부일 때 |
 
-### 여전히 미구현 (이번 범위 밖)
+### 여전히 미구현 (v0.5 기준)
 
-`#[store]` 전역 상태, `on_message`/`on_event`/`on_unmount`/`on_navigate` 구독, keyed 트리·가상화,
-콜백 prop(`on_select: fn(Id)`), `#[view]` 속성 매크로, 소문자/HTML 태그(`<h1>`), `<Table>`/`<Plot>`/`<Dock>`/`<Window>` 등,
-`Desktop`/`Web`/`Terminal` 플랫폼, `memo!`, i18n, 스트림 목, 클로저 내부 `<-`, `mount(엘리먼트)`.
+`on_message`의 **서비스 객체**(`ws`/`api`), keyed 경로 성능 최적화(문자열 → 해시), `#[view]` 속성 매크로,
+소문자/HTML 태그(`<h1>`), `<Table>`/`<VirtualList>`/`<Plot>`/`<Dock>`/`<Window>`/`<Menu>`/`<Fade>` 등 어휘,
+`Desktop`/`Web`/`Terminal` 플랫폼, `memo!`, i18n, 클로저 내부 `<-`, `mount(엘리먼트)`,
+**리스트 아이템 필드 대입**(`t.done = !t.done`).
 
 ### 남은 두 가지 리스트 제약 (다음 마일스톤 1순위)
 
@@ -91,13 +92,34 @@ rustc --edition 2021 --test --emit=metadata \
 디버깅 팁: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` 전개 코드를 덤프할 수 있다
 (`crates/elm-magic-macros/src/view.rs`).
 
-### 재측정 (v0.4)
+### 재측정 (v0.5)
 
-| 항목 | 이전 | v0.4 |
+| 항목 | v0.4 | v0.5 |
 |---|---|---|
-| 워크스페이스 테스트 | 36 | **64** |
-| `/tmp/elmchk` 스니펫 통과 | 11 / 58 | **41 / 65** |
-| `1.rs` 패턴 2/4/5/12/13 스모크 | 컴파일 불가 | **컴파일·동작** (`final_spec.rs`)
+| 워크스페이스 테스트 | 64 | **90** |
+| `/tmp/elmchk` 스니펫 통과 | 41 / 65 | **46 / 66** (v0.5 스모크 포함) |
+| 테스트 파일 | `syntax`·`timers`·`widgets`·`sugar` | + `store`(6) · `subs`(8) · `callbacks`(6) · `integration`(6) |
+
+---
+
+## 2.6 v0.5 — 구현 완료 3건 ✅ (우선순위 5·6·7)
+
+| # | 항목 | 상태 | 구현 / 사용법 |
+|---|---|---|---|
+| 5 | **`#[store]` 전역 상태 + keyed 트리** | ✅ | `#[store] struct App { count: i32 }` · `store_fn! { Settings { level: i32 = 3 } }` → `app.count += 1`. 슬롯은 아레나에 **이름 기반**으로 저장 (`Arena::store`/`store_get`/`store_set`/`store_version`)되고 `State<T>`가 `SlotKey::{Index, Store}`로 주소를 갖는다. keyed 슬롯은 인스턴스 경로 `"/<key 또는 @순번>:<컴포넌트>#<슬롯>"` → `Arena::keyed_slot`/`drop_instance`, 프레임 경계(`Ctx::begin_frame`/`end_frame`)에서 사라진 경로의 슬롯을 초기화 |
+| 6 | **구독 계열** | ✅ | `on_message(소스, 이름) { … }`(= `->` 스트림 + 인스턴스당 1회 가드) + **스트림 목** `mock_stream!`; `on_event(Name) { … }` + `bus.emit(Name)`; `on_net_change { … }` + `net.is_online()`; `on_navigate(\|v\| …)`(String 경로 또는 `navigate_value` 라우트 타입); `on_unmount { … }` (keyed 트리 연동) |
+| 7 | **콜백 prop + 사용자 컴포넌트 children** | ✅ | `fn ItemRow(item: Item, on_select: fn(i32))` → prop `Option<Callback<i32>>`. 호출부 `on_select={selected = _}`는 `Callback::new(move \|_elm_a, _elm_v\| …)`로, 본문 `on_select(item.id)`는 `__elm_cb.call(arena, …)`로 전개. 자식은 `props.children` → 본문의 `{children}`이 렌더. `<Row on_click={…}>` 클릭 가능 컨테이너 추가 |
+
+### v0.5에서 함께 바뀐 것
+
+| 변경 | 이유 |
+|---|---|
+| **모든 prop이 `Option<T>`** (`None`이면 선언된 기본값, 필수 prop은 명확한 panic) | 필수 prop(`item: Item`)을 기본값 없이 지원. `mount_with!`는 `Some(…)` + `..Default::default()` |
+| 프레임 루프 `elm_magic::frame::<C>(ctx, props)` | 렌더 → unmount/구독 전달 → 재렌더를 한 곳에 (테스트·플랫폼 공용) |
+| 슬롯 정체성 = **인스턴스 경로** (base 오프셋 → 경로 키) | keyed 트리·unmount·형제 분리. 부수적으로 "키 없는 리스트가 슬롯을 섞던" 기존 버그도 해결 |
+| 문자열 보간 `{x}` + `{x:?}` / `{x:.2}` | 사양서 예제의 Debug 출력 |
+| `Element::Col/Row`의 `on_click`, `Element::texts()/subtree_text()` | `<Row on_click>` 클릭 (헤드리스 + egui) |
+| `elm_magic::clone_value` / `nav_take` | 콜백·라우팅에서 호출부 타입 추론이 되도록 (`_elm_v.clone()`은 추론 실패) |
 
 ---
 
@@ -257,15 +279,15 @@ rustc --edition 2021 --test --emit=metadata \
 
 | 순위 | 작업 | 이유 |
 |---|---|---|
-| ~~1~~ | ~~**매크로 버그 픽스**~~ ✅ v0.4 | — |
-| ~~2~~ | ~~**시간 리터럴(`16ms`, `300ms`, `5min`)**~~ ✅ v0.4 | — |
-| ~~3~~ | ~~**이벤트에서 리스트 아이템 캡처**~~ ✅ v0.4 | — |
-| ~~4~~ | ~~**태그 어휘 1차 확장(11종 + `<Modal>` children)**~~ ✅ v0.4 | — |
-| 5 (→최우선) | **`#[store]`(전역 상태) + keyed 트리** — 렌더 순서 오프셋 → 키 기반 diff | `README.md` v0.4 로드맵. `<Row key={…}>`가 아직 조용히 무시됨 |
-| 6 | **구독 계열** — `on_message` / `on_event` / `on_unmount` / `on_navigate` + `mock`의 메서드·스트림 확장 | `3.rs` 절반의 전제 |
-| 7 | **콜백 prop(`on_select: fn(Id)`) + 사용자 컴포넌트 children** | `1.rs` 7번 패턴, `_`가 클릭류에서도 의미를 갖게 됨 |
-| 8 | **플랫폼 확장** — `Desktop`/`Web`/`Terminal`, egui 어댑터에 새 태그·패널 매핑 | 사양서 7.1/7.2 |
-| 9 | **스냅샷 계약** — `Element: Serialize` + insta, `mount(엘리먼트)` | 사양서 8.3 |
+| ~~1~4~~ | ~~매크로 버그 픽스 / 시간 리터럴 / 아이템 캡처 / 어휘 확장~~ ✅ v0.4 | — |
+| ~~5~~ | ~~**`#[store]` + keyed 트리**~~ ✅ v0.5 | — |
+| ~~6~~ | ~~**구독 계열**(`on_message`/`on_event`/`on_net_change`/`on_navigate`/`on_unmount`)~~ ✅ v0.5 | — |
+| ~~7~~ | ~~**콜백 prop + 사용자 컴포넌트 children**~~ ✅ v0.5 | — |
+| 8 (→최우선) | **리스트 아이템 편집** — 인덱스 추적(`t.done = !t.done` → `items[i].done` 전개) + 아이템당 핸들러 여러 개(`Rc` 바인딩) | 사양서 3.3의 마지막 구멍. `<Check checked={t.done} on_change={t.done = !t.done}>`가 목표 |
+| 9 | **어휘 2차 확장** — `Table`, `VirtualList`, `Scroll`, `Plot`, `Dock`, `Window`, `Sidebar`, `Menu/Item`, `Fade`, 소문자/HTML 태그 | 프로토타입 `2.rs` 대부분 |
+| 10 | **서비스 객체 + `#[view]` 속성 매크로** — `ws`/`api`/`cache`, `#[view] fn …` 문법 | 사양서 표면 문법과의 마지막 차이 |
+| 11 | **플랫폼 확장** — `Desktop`/`Web`/`Terminal`, `mount(엘리먼트)`, `memo!`, i18n | 사양서 7장/14장 |
+| 12 | **스냅샷 계약** — `Element: Serialize` + insta | 사양서 8.3 |
 
 ---
 
@@ -342,27 +364,36 @@ rustc --edition 2021 --test --emit=metadata \
 | `s39_router_match.rs` | `{match route { … => ui! { <Home /> } }}` | ✅ |
 | `w5.rs` | `<Button disabled={n > 0} on_click={n = 0}>` | ✅ |
 
-### 6.4 기존 테스트 현황 (워크스페이스 64개 통과)
+### 6.4 기존 테스트 현황 (워크스페이스 90개 통과)
 
 ```
 tests/counter.rs   tests/todo.rs    tests/effects.rs   tests/lifecycle.rs
 tests/css.rs       tests/mock.rs    tests/stream.rs    tests/raw.rs
 tests/platform.rs  tests/syntax.rs  tests/timers.rs    tests/widgets.rs
-tests/sugar.rs     crates/elm-magic-egui/tests/adapter.rs
+tests/sugar.rs     tests/store.rs   tests/subs.rs      tests/callbacks.rs
+                   tests/integration.rs
+                   crates/elm-magic-egui/tests/adapter.rs
 ```
 
 - `tests/syntax.rs` — 매크로 문법 픽스 7건 (범위/메서드/컴마/축약/분기 통일/캡처/소유 반복)
 - `tests/timers.rs` — 시간 리터럴, `after` 없는 `on_change`, 지연 효과 + mock
 - `tests/widgets.rs` — 신규 태그 11종 + `<Check>` 토글 + `<TextArea>` 입력 + `<Tab>`/`<Th>` 클릭
 - `tests/sugar.rs` — `.mock()` / `.mock2()`, `assert_text` / `assert_visible` / `assert_hidden`
+- `tests/store.rs` — `#[store]` 공유·버전, keyed 재정렬 상태 보존, unmount 초기화 + `on_unmount`, `store_fn!` 기본값
+- `tests/subs.rs` — `on_message`(+스트림 목), 이벤트 버스, `on_navigate`(String/타입), `on_net_change`
+- `tests/callbacks.rs` — 콜백 prop(`fn(T)`)·`_` 전달값·필수 prop panic, 컴포넌트 children(중첩 포함)
+- `tests/integration.rs` — store + keyed + 구독 + 콜백 + children 를 한 트리에서 통합 검증
 
 ---
 
 ## 7. 결론
 
-- `spec.md` / `1.rs`~`3.rs`는 **목표 상태(설계 의도)** 이고, `README.md`는 구현된 범위와 v0.x 제한을 상당 부분 정직하게 기술하고 있다.
-- v0.4에서 **문서화되지 않았던 매크로 버그 16종 중 8종을 수정**(2.5절)하고, 태그 어휘를 11종 늘렸으며,
-  분기 타입 통일(`IntoElements`)·소유 반복 덕분에 **`1.rs`의 상당수 패턴과 사양서 3.3/3.4가 그대로 컴파일**된다.
-- 남은 병목은 **`#[store]` + keyed 트리**, **구독 계열**, **콜백 prop / 사용자 컴포넌트 children**,
-  **플랫폼 확장**이며, 이는 모두 `README.md`의 v0.4+ 로드맵과 일치한다.
+- `spec.md` / `1.rs`~`3.rs`는 **목표 상태(설계 의도)** 이고, `README.md`는 구현된 범위와 v0.x 제한을 정직하게 기술하고 있다.
+- v0.4에서 **문서화되지 않았던 매크로 버그 16종 중 8종을 수정**하고 어휘를 11종 늘렸다.
+- v0.5에서 **우선순위 5·6·7**을 구현해 사양서의 **전역 상태(4.2)·keyed 트리(9.5)·구독(5.3/5.4)·콜백 prop/children(3.1)** 이 모두 동작한다.
+  - `#[store]` + 이름 기반 슬롯 + 버전 카운터, 인스턴스 경로 keyed 슬롯과 unmount,
+  - `on_message`(+스트림 목) / `on_event`+`bus.emit` / `on_net_change`+`net.is_online()` / `on_navigate` / `on_unmount`,
+  - `on_select: fn(Id)` 콜백 prop과 컴포넌트 children, 클릭 가능한 컨테이너.
+- 남은 병목은 **리스트 아이템 편집(인덱스 추적)** 과 **어휘 2차 확장**, **서비스 객체/`#[view]` 문법**이며,
+  이는 `README.md`의 v0.6 로드맵과 일치한다.
 

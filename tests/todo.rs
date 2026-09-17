@@ -53,7 +53,8 @@ fn todo_add_two_items() {
 #[test]
 fn cart_conditional_and_derived() {
     let app = elm_magic::mount_with::<Cart>(CartProps {
-        items: vec![("A".into(), 10.0), ("B".into(), 5.0)],
+        items: Some(vec![("A".to_string(), 10.0), ("B".to_string(), 5.0)]),
+        ..Default::default()
     });
     app.expect_text("Subtotal: 15");
     app.expect_text("A");

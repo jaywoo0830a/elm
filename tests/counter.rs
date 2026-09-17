@@ -37,7 +37,7 @@ fn counter_decrements() {
 fn ui_macro_standalone() {
     let el = elm_magic::ui! { <Col class="x"><Text>"hi"</Text><Button disabled={true}>"go"</Button></Col> };
     match &el {
-        elm_magic::Element::Col { class, children } => {
+        elm_magic::Element::Col { class, children, .. } => {
             assert_eq!(class, &vec!["x".to_string()]);
             assert_eq!(children.len(), 2);
         }
@@ -67,7 +67,7 @@ fn nested_component_state_is_isolated() {
 
 #[test]
 fn nested_component_with_props() {
-    let mut app = elm_magic::mount_with::<App>(AppProps {});
+    let mut app = elm_magic::mount_with::<App>(AppProps::default());
     app.click("+");
     app.click("+");
     app.expect_text("Count: 2");

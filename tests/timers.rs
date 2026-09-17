@@ -129,7 +129,7 @@ elm_magic::view! {
 
 #[test]
 fn delayed_effect_from_click_is_mockable() {
-    let mut app = elm_magic::mount!(Refresh);
+    let app = elm_magic::mount!(Refresh);
     let mut app = app.mock(api_user, |id: i32| format!("mocked-{id}"));
     app.click("refresh");
     app.advance(99);

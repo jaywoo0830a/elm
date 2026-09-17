@@ -1,11 +1,173 @@
 use proc_macro::{Delimiter, Group, Punct, Spacing, Span, TokenStream, TokenTree};
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub struct Env<'a> {
     pub states: &'a HashSet<String>,
     /// next hidden slot index for lifecycle constructs (on_mount/on_tick/…)
     pub slots: &'a Cell<usize>,
+    /// 콜백 prop (`on_select: fn(Id)`) 이름들 — 호출은 `__elm_cb_<name>.call(..)`.
+    pub callbacks: &'a HashSet<String>,
+    /// 본문이 `children`을 쓴다면 prop의 사전 바인딩(`__elm_children`)이 있다.
+    pub has_children: bool,
+    /// `#[store]` 인스턴스 이름(`app`) → 접근자/필드 정보.
+    pub stores: &'a HashMap<String, crate::store::StoreInfo>,
+}
+
+impl<'a> Env<'a> {
+    /// 상태/콜백/store가 없는 빈 환경 (`ui!`용).
+    pub fn empty(
+        states: &'a HashSet<String>,
+        slots: &'a Cell<usize>,
+        callbacks: &'a HashSet<String>,
+        stores: &'a HashMap<String, crate::store::StoreInfo>,
+    ) -> Self {
+        Env { states, slots, callbacks, has_children: false, stores }
+    }
+}
+
+/// `app.theme` — store 필드 접근인가?
+fn store_access(env: &Env, toks: &[TokenTree], i: usize) -> Option<(String, String)> {
+    let id = match &toks[i] {
+        TokenTree::Ident(id) => id.to_string(),
+        _ => return None,
+    };
+    if env.states.contains(&id) {
+        return None;
+    }
+    let info = env.stores.get(&id)?;
+    match (toks.get(i + 1), toks.get(i + 2)) {
+        (Some(TokenTree::Punct(p)), Some(TokenTree::Ident(f)))
+            if p.as_char() == '.' && !is_field_access(toks, i) =>
+        {
+            let field = f.to_string();
+            // 스토어에 없는 이름(`app.remember()`)은 store 접근이 아니다
+            if !info.fields.iter().any(|x| *x == field) {
+                return None;
+            }
+            Some((format!("__elm_store_{}", id), field))
+        }
+        _ => None,
+    }
+}
+
+/// `bus.emit(Name)` / `emit(Name)` — 이벤트 버스 (사양서 5.3).
+fn bus_emit(_env: &Env, toks: &[TokenTree], i: usize) -> Option<(String, usize)> {
+    let after = match &toks[i] {
+        TokenTree::Ident(id) if id.to_string() == "bus" => {
+            match (toks.get(i + 1), toks.get(i + 2)) {
+                (Some(TokenTree::Punct(p)), Some(TokenTree::Ident(m)))
+                    if p.as_char() == '.' && m.to_string() == "emit" =>
+                {
+                    i + 3
+                }
+                _ => return None,
+            }
+        }
+        TokenTree::Ident(id) if id.to_string() == "emit" => i + 1,
+        _ => return None,
+    };
+    let g = match toks.get(after) {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => g,
+        _ => return None,
+    };
+    let event: Vec<TokenTree> = g.stream().into_iter().collect();
+    let src = TokenStream::from_iter(event).to_string();
+    Some((format!("::core::stringify!({})", src), after + 1))
+}
+
+/// `net.is_online()` — 플랫폼 연결 상태 (사양서 5.3).
+fn net_is_online(toks: &[TokenTree], i: usize) -> Option<usize> {
+    match (
+        &toks[i],
+        toks.get(i + 1),
+        toks.get(i + 2),
+        toks.get(i + 3),
+    ) {
+        (
+            TokenTree::Ident(a),
+            Some(TokenTree::Punct(p)),
+            Some(TokenTree::Ident(b)),
+            Some(TokenTree::Group(g)),
+        ) if a.to_string() == "net"
+            && p.as_char() == '.'
+            && b.to_string() == "is_online"
+            && g.delimiter() == Delimiter::Parenthesis =>
+        {
+            Some(i + 4)
+        }
+        _ => None,
+    }
+}
+
+/// 렌더/이벤트 공통 특수 폼: `net.is_online()` / `bus.emit(..)` / 콜백 prop 호출 /
+/// `children` prop / store 필드 읽기 (사양서 4.2, 5.3, 3.1).
+///
+/// `arena_read`는 `&…arena` 표현식, `arena_mut`는 `&mut …arena` 표현식.
+fn special_form(
+    env: &Env,
+    toks: &[TokenTree],
+    i: usize,
+    arena_read: &str,
+    arena_mut: &str,
+) -> Option<(TokenStream, usize)> {
+    if let Some(n) = net_is_online(toks, i) {
+        return Some((parse_ts(&format!("({}.online())", arena_read)), n));
+    }
+    if let Some((ev, n)) = bus_emit(env, toks, i) {
+        return Some((
+            parse_ts(&format!(
+                "{{ {}.emit(&{}.replace(' ', \"\")); }}",
+                arena_mut, ev
+            )),
+            n,
+        ));
+    }
+    let name = match &toks[i] {
+        TokenTree::Ident(id) => id.to_string(),
+        _ => return None,
+    };
+    if env.callbacks.contains(&name) {
+        if let Some(TokenTree::Group(g)) = toks.get(i + 1) {
+            if g.delimiter() == Delimiter::Parenthesis {
+                let args: Vec<TokenTree> = g.stream().into_iter().collect();
+                let args_ts = transform_event_read(&args, env, None, Level::Expr).to_string();
+                return Some((
+                    parse_ts(&format!(
+                        "{{ let __elm_cb = __elm_cb_{n}.clone(); __elm_cb.call({a}, {args}); }}",
+                        n = name,
+                        a = arena_mut,
+                        args = args_ts
+                    )),
+                    i + 2,
+                ));
+            }
+        }
+    }
+    if env.has_children && name == "children" && !env.states.contains("children") {
+        return Some((parse_ts("(__elm_children_prop.clone())"), i + 1));
+    }
+    if let Some((inst, field)) = store_access(env, toks, i) {
+        return Some((
+            parse_ts(&format!("({}.{}.get({}).clone())", inst, field, arena_read)),
+            i + 3,
+        ));
+    }
+    None
+}
+
+/// `<... key={expr}>`가 있으면 키 식 문자열.
+fn key_attr(attrs: &[(String, AttrVal)]) -> Option<String> {
+    attrs.iter().find_map(|(k, v)| {
+        if k != "key" {
+            return None;
+        }
+        Some(match v {
+            AttrVal::Lit(s) => format!("::std::string::String::from({:?})", s),
+            AttrVal::Expr(e) => e.to_string(),
+            AttrVal::Flag => "::std::string::String::from(\"key\")".to_string(),
+        })
+    })
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -315,6 +477,146 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                 }
                 panic!("elm-magic: on_mount expects a block: on_mount {{ ... }}");
             }
+            TokenTree::Ident(id) if id.to_string() == "on_unmount" => {
+                if let Some(TokenTree::Group(g)) = toks.get(i + 1) {
+                    if g.delimiter() == Delimiter::Brace {
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None, Level::Stmt).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "__elm_ctx.on_unmount(::std::rc::Rc::new(move |_elm_a: &mut ::elm_magic::Arena| {{ {} }}));",
+                                body_ts
+                            )),
+                            false,
+                        ));
+                        i += 2;
+                        continue;
+                    }
+                }
+                panic!("elm-magic: on_unmount expects a block: on_unmount {{ ... }}");
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_net_change" => {
+                if let Some(TokenTree::Group(g)) = toks.get(i + 1) {
+                    if g.delimiter() == Delimiter::Brace {
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None, Level::Stmt).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "__elm_ctx.on_net_change(::std::rc::Rc::new(move |_elm_a: &mut ::elm_magic::Arena| {{ {} }}));",
+                                body_ts
+                            )),
+                            false,
+                        ));
+                        i += 2;
+                        continue;
+                    }
+                }
+                panic!("elm-magic: on_net_change expects a block: on_net_change {{ ... }}");
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_event" => {
+                match (toks.get(i + 1), toks.get(i + 2)) {
+                    (Some(TokenTree::Group(name)), Some(TokenTree::Group(g)))
+                        if name.delimiter() == Delimiter::Parenthesis
+                            && g.delimiter() == Delimiter::Brace =>
+                    {
+                        let ev: Vec<TokenTree> = name.stream().into_iter().collect();
+                        let ev_src = TokenStream::from_iter(ev).to_string();
+                        let body: Vec<TokenTree> = g.stream().into_iter().collect();
+                        let body_ts = transform_event(&body, env, None, Level::Stmt).to_string();
+                        pieces.push((
+                            parse_ts(&format!(
+                                "__elm_ctx.on_event(&::core::stringify!({}).replace(' ', \"\"), ::std::rc::Rc::new(move |_elm_a: &mut ::elm_magic::Arena| {{ {} }}));",
+                                ev_src, body_ts
+                            )),
+                            false,
+                        ));
+                        i += 3;
+                        continue;
+                    }
+                    _ => panic!("elm-magic: on_event expects on_event(Name) {{ ... }}"),
+                }
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_navigate" => {
+                if let Some(TokenTree::Group(g)) = toks.get(i + 1) {
+                    if g.delimiter() == Delimiter::Parenthesis {
+                        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+                        match (inner.first(), inner.get(1)) {
+                            (Some(TokenTree::Punct(p)), Some(TokenTree::Ident(var)))
+                                if p.as_char() == '|' =>
+                            {
+                                // `|path| body` — 닫는 `|`가 있으면 건너뛴다
+                                let mut start = 2;
+                                if matches!(inner.get(start), Some(TokenTree::Punct(pp)) if pp.as_char() == '|') {
+                                    start += 1;
+                                }
+                                let body: Vec<TokenTree> = inner[start..].to_vec();
+                                let body_ts =
+                                    transform_event(&body, env, None, Level::Stmt).to_string();
+                                pieces.push((
+                                    parse_ts(&format!(
+                                        "__elm_ctx.on_navigate(::std::rc::Rc::new(move |_elm_a: &mut ::elm_magic::Arena, __elm_nav: &dyn ::core::any::Any| {{ let {v} = ::elm_magic::nav_take(__elm_nav); {} }}));",
+                                        body_ts,
+                                        v = var.to_string()
+                                    )),
+                                    false,
+                                ));
+                                i += 2;
+                                continue;
+                            }
+                            _ => panic!("elm-magic: on_navigate expects on_navigate(|path| ...)"),
+                        }
+                    }
+                }
+                panic!("elm-magic: on_navigate expects on_navigate(|path| ...)");
+            }
+            TokenTree::Ident(id) if id.to_string() == "on_message" => {
+                // `on_message(소스, 상태) { 본문 }` → `소스 -> 상태 { 본문 }` (사양서 5.4)
+                match (toks.get(i + 1), toks.get(i + 2)) {
+                    (Some(TokenTree::Group(args)), Some(TokenTree::Group(g)))
+                        if args.delimiter() == Delimiter::Parenthesis
+                            && g.delimiter() == Delimiter::Brace =>
+                    {
+                        let inner: Vec<TokenTree> = args.stream().into_iter().collect();
+                        let comma = inner.iter().position(
+                            |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','),
+                        );
+                        let (src, slot) = match comma {
+                            Some(c) if c + 1 < inner.len() => {
+                                (inner[..c].to_vec(), inner[c + 1..].to_vec())
+                            }
+                            _ => panic!(
+                                "elm-magic: on_message expects on_message(소스, 상태) {{ ... }}"
+                            ),
+                        };
+                        let slot_name = match slot.as_slice() {
+                            [TokenTree::Ident(t)] => t.to_string(),
+                            _ => panic!(
+                                "elm-magic: on_message expects on_message(소스, 상태) {{ ... }}"
+                            ),
+                        };
+                        // 구독은 인스턴스당 한 번만 (매 렌더마다 스트림이 새로 생기지 않게)
+                        let once = env.slots.get();
+                        env.slots.set(once + 1);
+                        let spawn = emit_stream(&src, &slot_name, g, env, "&mut __elm_ctx.arena");
+                        pieces.push((
+                            parse_ts(&format!(
+                                "{{ let __elm_on = __elm_ctx.slot({i}usize, || false); \
+                                  if !*__elm_on.get(&__elm_ctx.arena) {{ \
+                                      __elm_on.set(&mut __elm_ctx.arena, true); {spawn} \
+                                  }} }}",
+                                i = once,
+                                spawn = spawn
+                            )),
+                            false,
+                        ));
+                        i += 3;
+                        continue;
+                    }
+                    _ => {
+                        panic!("elm-magic: on_message expects on_message(소스, 상태) {{ ... }}")
+                    }
+                }
+            }
             TokenTree::Ident(id) if id.to_string() == "on_key" => {
                 match (toks.get(i + 1), toks.get(i + 2)) {
                     (Some(TokenTree::Group(key)), Some(TokenTree::Group(g)))
@@ -578,6 +880,16 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
                 continue;
             }
         }
+        // 특수 폼: store 필드 / 콜백 prop 호출 / children / bus / net (사양서 4.2, 5.3, 3.1)
+        if matches!(&toks[i], TokenTree::Ident(_)) {
+            if let Some((ts, next)) =
+                special_form(env, toks, i, "&__elm_ctx.arena", "&mut __elm_ctx.arena")
+            {
+                out.extend(ts);
+                i = next;
+                continue;
+            }
+        }
         if let TokenTree::Ident(id) = &toks[i] {
             let name = id.to_string();
             // field key (`name:`) and field access (`.name`) stay verbatim
@@ -647,6 +959,106 @@ fn find_stream_arrow(toks: &[TokenTree], from: usize, env: &Env) -> Option<usize
     None
 }
 
+/// `소스 -> 슬롯 { 본문 }` / `on_message(소스, 이름) { 본문 }` 전개 (사양서 5.4).
+///
+/// - `슬롯`이 상태면 스트림 값을 그 슬롯에 쓴다(본문은 새 값을 읽는다).
+/// - 상태가 아니면 본문 안에서 그 이름으로 지역 바인딩한다
+///   (`on_message(ws, m) { msgs.push(m); }`).
+///
+/// 소스가 단순 호출 `f(args)`나 식별자면 `mock_stream!`이 값을 가로챌 수 있다.
+/// `spawn_arena`는 스폰을 실행하는 위치의 아레나 식 (`_elm_a` / `&mut __elm_ctx.arena`).
+fn emit_stream(
+    lhs: &[TokenTree],
+    slot: &str,
+    body_group: &Group,
+    env: &Env,
+    spawn_arena: &str,
+) -> String {
+    let body_toks: Vec<TokenTree> = body_group.stream().into_iter().collect();
+    let body_ts = transform_event(&body_toks, env, None, Level::Stmt).to_string();
+    let cont = if env.states.contains(slot) {
+        format!(
+            "move |_elm_a: &mut ::elm_magic::Arena, __elm_v| {{ __elm_state_{t}.set(_elm_a, __elm_v); {body} }}",
+            t = slot,
+            body = body_ts
+        )
+    } else {
+        format!(
+            "move |_elm_a: &mut ::elm_magic::Arena, __elm_v| {{ let {t} = __elm_v; {body} }}",
+            t = slot,
+            body = body_ts
+        )
+    };
+
+    // 소스 식: 이벤트 안이면 `_elm_a`, 렌더 안이면 `__elm_ctx` 기준으로 상태를 읽는다.
+    let read_ts = |toks: &[TokenTree]| -> String {
+        if spawn_arena == "_elm_a" {
+            transform_event_read(toks, env, None, Level::Expr).to_string()
+        } else {
+            transform_render(toks, env).to_string()
+        }
+    };
+
+    match lhs {
+        // `f(a, b)` → 인자를 미리 계산해 두고 목을 확인한다 (`mock_stream!`)
+        [TokenTree::Ident(f), TokenTree::Group(g)]
+            if g.delimiter() == Delimiter::Parenthesis && !env.states.contains(&f.to_string()) =>
+        {
+            let parts = split_top_commas(&g.stream().into_iter().collect::<Vec<_>>());
+            let mut hoist = String::new();
+            let mut args = String::new();
+            for (k, p) in parts.iter().enumerate() {
+                if k > 0 {
+                    args.push_str(", ");
+                }
+                args.push_str(&format!("__elm_src_args.{}", k));
+                hoist.push_str(&format!("{}, ", read_ts(p)));
+            }
+            format!(
+                "{{ let __elm_src_args = ({hoist}); {a}.spawn_mockable_stream({name:?}, move || ::std::iter::IntoIterator::into_iter({f}({args})), {cont}); }}",
+                hoist = hoist,
+                a = spawn_arena,
+                name = f.to_string(),
+                f = f,
+                args = args,
+                cont = cont
+            )
+        }
+        // `ws` → 그대로 사용 (`on_message(ws, m)`)
+        [TokenTree::Ident(f)] if !env.states.contains(&f.to_string()) => format!(
+            "{{ {a}.spawn_mockable_stream({name:?}, move || ::std::iter::IntoIterator::into_iter({f}), {cont}); }}",
+            a = spawn_arena,
+            name = f.to_string(),
+            f = f,
+            cont = cont
+        ),
+        // 그 밖의 식: 목 없이 즉시 평가
+        _ => format!(
+            "{{ {a}.spawn_stream(::std::iter::IntoIterator::into_iter({lhs}), {cont}); }}",
+            a = spawn_arena,
+            lhs = read_ts(lhs),
+            cont = cont
+        ),
+    }
+}
+
+/// 최상위 콤마로 나눈다 (중첩 그룹은 그대로).
+fn split_top_commas(toks: &[TokenTree]) -> Vec<Vec<TokenTree>> {
+    let mut out = Vec::new();
+    let mut cur: Vec<TokenTree> = Vec::new();
+    for t in toks {
+        if matches!(t, TokenTree::Punct(p) if p.as_char() == ',') {
+            out.push(std::mem::take(&mut cur));
+            continue;
+        }
+        cur.push(t.clone());
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 /// Try to parse an effect `a, b <- expr` starting at `i`.
 /// Returns (targets, index of RHS start) if present.
 fn try_parse_effect(toks: &[TokenTree], i: usize, env: &Env) -> Option<(Vec<String>, usize)> {
@@ -698,31 +1110,19 @@ fn transform_event(
         // LHS is processed so the expression is not emitted twice.
         if let Some(j) = find_stream_arrow(toks, i, env) {
             let lhs: Vec<TokenTree> = toks[i..j].to_vec();
-            let lhs_ts = transform_event_read(&lhs, env, value_binding, Level::Expr).to_string();
             let tname = match &toks[j + 2] {
                 TokenTree::Ident(t) => t.to_string(),
                 _ => unreachable!(),
             };
-            let body_toks: Vec<TokenTree> = match &toks[j + 3] {
-                TokenTree::Group(g) => g.stream().into_iter().collect(),
+            let body_group = match &toks[j + 3] {
+                TokenTree::Group(g) => g.clone(),
                 _ => unreachable!(),
             };
-            let body_ts = transform_event(&body_toks, env, None, Level::Stmt).to_string();
-            let emitted = format!(
-                "{{ \
-                let __elm_iter = ::std::iter::IntoIterator::into_iter({}); \
-                _elm_a.spawn_stream(__elm_iter, move |_elm_a: &mut ::elm_magic::Arena, __elm_v| {{ \
-                    __elm_state_{}.set(_elm_a, __elm_v); \
-                    {} \
-                }}); \
-                }}",
-                lhs_ts, tname, body_ts
-            );
-            out.extend(parse_ts(&emitted));
+            out.extend(parse_ts(&emit_stream(&lhs, &tname, &body_group, env, "_elm_a")));
             i = j + 4;
             if i < toks.len() {
                 if let TokenTree::Punct(sp) = &toks[i] {
-                    if sp.as_char() == ';' {
+                    if sp.as_char() == ';' || sp.as_char() == ',' {
                         out.push(punct(';'));
                         i += 1;
                     }
@@ -735,7 +1135,7 @@ fn transform_event(
             if name == "_" {
                 match value_binding {
                     Some(v) => {
-                        out.extend(parse_ts(&format!("({}.clone())", v)));
+                        out.extend(parse_ts(&format!("::elm_magic::clone_value(&{})", v)));
                         i += 1;
                         continue;
                     }
@@ -748,6 +1148,59 @@ fn transform_event(
                         continue;
                     }
                 }
+            }
+            // store 필드 대입: `app.theme = …` (사양서 4.2)
+            if level == Level::Stmt {
+                if let Some((inst, field)) = store_access(env, toks, i) {
+                    let var = format!("{}.{}", inst, field);
+                    let after = i + 3;
+                    let op = match (toks.get(after), toks.get(after + 1)) {
+                        (Some(TokenTree::Punct(p)), _)
+                            if p.as_char() == '=' && p.spacing() == Spacing::Alone =>
+                        {
+                            Some(None)
+                        }
+                        (Some(TokenTree::Punct(p1)), Some(TokenTree::Punct(p2)))
+                            if p1.spacing() == Spacing::Joint
+                                && "+-*/%&|^".contains(p1.as_char())
+                                && p2.as_char() == '='
+                                && p2.spacing() == Spacing::Alone =>
+                        {
+                            Some(Some(p1.as_char()))
+                        }
+                        _ => None,
+                    };
+                    if let Some(op) = op {
+                        let rhs_start = if op.is_none() { after + 1 } else { after + 2 };
+                        let (rhs_end, term) = stmt_end(toks, rhs_start);
+                        let rhs: Vec<TokenTree> = toks[rhs_start..rhs_end].to_vec();
+                        let rhs_ts =
+                            transform_event_read(&rhs, env, value_binding, Level::Expr).to_string();
+                        let emitted = match op {
+                            None => format!(
+                                "{{ let __elm_rhs = ({}); {}.set(_elm_a, __elm_rhs); }}",
+                                rhs_ts, var
+                            ),
+                            Some(c) => format!(
+                                "{{ let __elm_rhs = ({}); {}.mutate(_elm_a, |__v| *__v {}= __elm_rhs); }}",
+                                rhs_ts, var, c
+                            ),
+                        };
+                        out.extend(parse_ts(&emitted));
+                        i = rhs_end;
+                        if term.is_some() {
+                            out.push(punct(';'));
+                            i += 1;
+                        }
+                        continue;
+                    }
+                }
+            }
+            // 특수 폼 읽기: store / 콜백 prop / children / bus / net
+            if let Some((ts, next)) = special_form(env, toks, i, "_elm_a", "_elm_a") {
+                out.extend(ts);
+                i = next;
+                continue;
             }
             if env.states.contains(&name) {
                 // effect? `a, b <- expr [after <dur>]` (사양서 5.1, 5.2)
@@ -1028,7 +1481,7 @@ fn transform_event_read(
             if name == "_" {
                 match value_binding {
                     Some(v) => {
-                        out.extend(parse_ts(&format!("({}.clone())", v)));
+                        out.extend(parse_ts(&format!("::elm_magic::clone_value(&{})", v)));
                         i += 1;
                         continue;
                     }
@@ -1040,6 +1493,11 @@ fn transform_event_read(
                         continue;
                     }
                 }
+            }
+            if let Some((ts, next)) = special_form(env, toks, i, "_elm_a", "_elm_a") {
+                out.extend(ts);
+                i = next;
+                continue;
             }
             if !is_field_access(toks, i) && env.states.contains(&name) {
                 // struct-literal field key `name:` stays verbatim
@@ -1098,7 +1556,7 @@ fn text_expr(content: &str, env: &Env) -> TokenStream {
     .expect("elm-magic internal: bad text code")
 }
 
-/// Split `"a {x} b"` into ("a {} b", ["x"]).
+/// Split `"a {x} b"` into ("a {} b", ["x"]) — `{x:?}`/`{x:.2}`의 서식도 지원.
 fn split_fmt(s: &str) -> (String, Vec<String>) {
     let mut fmt = String::new();
     let mut args = Vec::new();
@@ -1112,9 +1570,33 @@ fn split_fmt(s: &str) -> (String, Vec<String>) {
                 }
                 inner.push(d);
             }
-            fmt.push_str("{}");
-            if !inner.is_empty() {
-                args.push(inner);
+            // `expr:?` / `expr:.2` — 단일 `:`(경로 `::`가 아닌)이면 서식 지정자
+            let mut spec: Option<usize> = None;
+            let bytes: Vec<char> = inner.chars().collect();
+            for (k, ch) in bytes.iter().enumerate() {
+                if *ch == ':' && bytes.get(k + 1) != Some(&':') && bytes.get(k + 1) != Some(&'=') {
+                    spec = Some(k);
+                    break;
+                }
+            }
+            match spec {
+                Some(k) => {
+                    let expr: String = bytes[..k].iter().collect();
+                    let fmt_spec: String = bytes[k + 1..].iter().collect();
+                    fmt.push('{');
+                    fmt.push(':');
+                    fmt.push_str(&fmt_spec);
+                    fmt.push('}');
+                    if !expr.trim().is_empty() {
+                        args.push(expr);
+                    }
+                }
+                None => {
+                    fmt.push_str("{}");
+                    if !inner.is_empty() {
+                        args.push(inner);
+                    }
+                }
             }
         } else {
             fmt.push(c);
@@ -1177,8 +1659,11 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
                         Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
                             let inner: Vec<TokenTree> = g.stream().into_iter().collect();
                             let is_event = key.starts_with("on_");
-                            // `{_}`는 *값* 이벤트(on_change/on_enter)에서 전달값을 뜻한다.
-                            let value_binding = if matches!(key.as_str(), "on_change" | "on_enter") {
+                            // `{_}`는 *값* 이벤트(on_change/on_enter)와
+                            // 컴포넌트 콜백 prop(`on_select: fn(Id)`)에서 전달값을 뜻한다.
+                            let value_binding = if matches!(key.as_str(), "on_change" | "on_enter")
+                                || (!is_builtin_tag(&tag) && is_event)
+                            {
                                 Some("_elm_v")
                             } else {
                                 None
@@ -1385,10 +1870,11 @@ fn emit_element(
         "Col" | "Row" => {
             let children_ts = transform_children(children.unwrap_or(&[]), env, ',').to_string();
             format!(
-                "::elm_magic::Element::{} {{ class: {}, children: {} }}",
+                "::elm_magic::Element::{} {{ class: {}, children: {}, on_click: {} }}",
                 tag,
                 class_tokens(attrs),
-                children_ts
+                children_ts,
+                event_closure(attrs, "on_click", None)
             )
         }
         "Button" => {
@@ -1520,6 +2006,14 @@ fn emit_element(
         "Raw" => unreachable!("`<Raw>` is handled by emit_raw in parse_element"),
         other => return emit_component(other, attrs, children, env),
     };
+    // `<... key={…}>` — 자식 컴포넌트의 슬롯 경로에 키를 넣는다 (사양서 9.5).
+    let code = match key_attr(attrs) {
+        Some(k) if is_builtin_tag(tag) => format!(
+            "{{ __elm_ctx.enter_key(::elm_magic::key_of(&({}))); let __elm_keyed = {}; __elm_ctx.exit_key(); __elm_keyed }}",
+            k, code
+        ),
+        _ => code,
+    };
     code.parse().expect("elm-magic internal: bad element code")
 }
 
@@ -1556,11 +2050,38 @@ fn substitute_ident(ts: TokenStream, name: &str, replacement: TokenStream) -> To
         .collect()
 }
 
+/// 내장 태그인가? (아니면 사용자 컴포넌트)
+fn is_builtin_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "Text"
+            | "Strong"
+            | "Col"
+            | "Row"
+            | "Button"
+            | "Input"
+            | "TextArea"
+            | "Check"
+            | "Tab"
+            | "Th"
+            | "Td"
+            | "Banner"
+            | "Spinner"
+            | "Divider"
+            | "Progress"
+            | "Modal"
+            | "Raw"
+    )
+}
+
+/// 사용자 컴포넌트 렌더 (사양서 3.1):
+/// `Some(prop)`으로 감싸고(모든 prop은 `Option<T>`), `on_*`는 콜백 prop으로,
+/// `key`는 인스턴스 경로로, 자식은 `children` prop으로 넘긴다.
 fn emit_component(
     tag: &str,
     attrs: &[(String, AttrVal)],
     children: Option<&[TokenTree]>,
-    _env: &Env,
+    env: &Env,
 ) -> TokenStream {
     if !tag.starts_with(char::is_uppercase) {
         panic!(
@@ -1569,24 +2090,48 @@ fn emit_component(
             tag
         );
     }
-    if let Some(c) = children {
-        if !c.is_empty() {
-            panic!("elm-magic: component `<{}>` cannot have children in v0.1", tag);
-        }
-    }
     let mut fields = String::new();
     for (k, v) in attrs {
+        if k == "key" {
+            continue;
+        }
         match v {
             AttrVal::Flag => continue,
+            AttrVal::Expr(e) if k.starts_with("on_") => {
+                // 콜백 prop — `on_select={selected = Some(_)}` (사양서 3.1)
+                fields.push_str(&format!(
+                    "{}: ::core::option::Option::Some(::elm_magic::Callback::new(move |_elm_a: &mut ::elm_magic::Arena, _elm_v| {{ {} }})), ",
+                    k, e
+                ));
+            }
             AttrVal::Lit(s) => fields.push_str(&format!(
-                "{}: ::std::convert::Into::into({:?}), ",
+                "{}: ::core::option::Option::Some(::std::string::String::from({:?})), ",
                 k, s
             )),
-            AttrVal::Expr(e) => fields.push_str(&format!("{}: {}, ", k, e)),
+            AttrVal::Expr(e) => fields.push_str(&format!(
+                "{}: ::core::option::Option::Some({}), ",
+                k, e
+            )),
         }
     }
+    if let Some(c) = children {
+        if !c.is_empty() {
+            let children_ts = transform_children(c, env, ',').to_string();
+            fields.push_str(&format!(
+                "children: ::core::option::Option::Some({}), ",
+                children_ts
+            ));
+        }
+    }
+    // 순서 중요: 키 → 경로 세그먼트 → props → 인스턴스 렌더.
+    // (props를 먼저 만들면 그 안의 자식 인스턴스들이 형제 순번을 먼저 가져가
+    //  부모 경로가 흔들린다. `key={i.id}`가 `i`를 borrow하는 것과도 순서가 맞아야 한다.)
+    let key = key_attr(attrs)
+        .map(|k| format!("::core::option::Option::Some(::elm_magic::key_of(&({})))", k))
+        .unwrap_or_else(|| "::core::option::Option::None".to_string());
     let code = format!(
-        "{{ let __elm_p = {t}Props {{ {f}..::core::default::Default::default() }}; let __elm_b = __elm_ctx.base; __elm_ctx.base += {t}::SLOTS; let __elm_e = {t}::render(__elm_ctx, &__elm_p); __elm_ctx.base = __elm_b; __elm_e }}",
+        "{{ let __elm_key = {k};           let __elm_seg = __elm_ctx.instance_segment(__elm_key, {t:?});           let __elm_p = {t}Props {{ {f}..::core::default::Default::default() }};           let __elm_e = __elm_ctx.with_instance(__elm_seg, |__elm_ctx| {t}::render(__elm_ctx, &__elm_p));           __elm_e }}",
+        k = key,
         t = tag,
         f = fields
     );

@@ -36,6 +36,38 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+// ── 스트림 목 (사양서 8.2 — 스트림도 교체 가능) ─────────────
+
+thread_local! {
+    /// 스트림 목: 이름 → 값 목록 (타입 소거). `mock_stream!`이 등록한다.
+    static STREAM_MOCKS: RefCell<HashMap<String, Vec<Box<dyn Any>>>> = RefCell::new(HashMap::new());
+}
+
+/// Register a stream mock: `mock_stream!(app, ws, [msg1, msg2])`.
+pub fn set_stream_mock<T: 'static>(name: &str, values: Vec<T>) {
+    STREAM_MOCKS.with(|m| {
+        m.borrow_mut().insert(
+            name.to_string(),
+            values.into_iter().map(|v| Box::new(v) as Box<dyn Any>).collect(),
+        );
+    });
+}
+
+/// Take (and consume) a registered stream mock, downcasting to `T`.
+pub fn take_stream_mock<T: 'static>(name: &str) -> Option<Vec<T>> {
+    STREAM_MOCKS.with(|m| {
+        m.borrow_mut().remove(name).map(|values| {
+            values
+                .into_iter()
+                .map(|v| {
+                    *v.downcast::<T>()
+                        .unwrap_or_else(|_| panic!("elm-magic stream mock: value type mismatch for {:?}", name))
+                })
+                .collect()
+        })
+    })
+}
+
 type MockFn = Rc<dyn Fn(&[&dyn Any]) -> Box<dyn Any>>;
 
 thread_local! {

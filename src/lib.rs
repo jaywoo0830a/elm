@@ -64,12 +64,67 @@ macro_rules! mock {
     };
 }
 
-pub use element::{Element, IntoElement, IntoElements};
-pub use state::{Arena, Ctx, State};
+/// Register a stream mock: `mock_stream!(app, ws, [msg1, msg2])` (사양서 8.2).
+///
+/// 스트림 소스(`f(args)`)가 목과 같은 이름이면 목의 값들이 순서대로 흘러간다.
+#[macro_export]
+macro_rules! mock_stream {
+    ($app:ident, $name:ident, [$($v:expr),* $(,)?]) => {
+        $app.set_stream_mock(stringify!($name), ::std::vec![$($v),*])
+    };
+}
+
+pub use element::{Callback, Element, IntoElement, IntoElements};
+pub use state::{Arena, Ctx, FrameTail, State};
+
+/// 이벤트/콜백으로 들어온 값(`_`)을 복제한다.
+///
+/// `(_elm_v.clone())` 대신 이 함수를 거치면 타입 추론이 잘 된다 —
+/// 컴포넌트 콜백 prop(`on_select: fn(Id)`)의 인자 타입은 호출부에서
+/// 추론되어야 하기 때문 (사양서 3.1).
+pub fn clone_value<T: Clone>(value: &T) -> T {
+    value.clone()
+}
+
+/// `on_navigate` 핸들러가 받은 타입 소거 값을 꺼낸다 (사양서 5.3).
+///
+/// 타입은 본문 사용처에서 추론된다: `on_navigate(|r| route = r)` → `r: Route`.
+/// 런타임에 넣은 값과 타입이 다르면 panic.
+pub fn nav_take<T: Clone + 'static>(value: &dyn std::any::Any) -> T {
+    value
+        .downcast_ref::<T>()
+        .unwrap_or_else(|| panic!("elm-magic: navigate 값의 타입이 맞지 않습니다"))
+        .clone()
+}
+
+/// `key={expr}` → 인스턴스 경로에 쓸 안정적인 문자열 (사양서 9.5).
+pub fn key_of<T: std::fmt::Debug>(value: &T) -> String {
+    format!("{:?}", value)
+}
 
 /// 뷰 본문을 `Element`로 마감한다 (본문이 요소 목록이면 `Fragment`로 감쌈).
 pub fn into_element<T: IntoElement>(value: T) -> Element {
     value.into_element()
+}
+
+/// 한 프레임 렌더 (사양서 9.5, 5.3):
+/// 렌더 → (사라진 키의 `on_unmount` + 대기 중인 `on_event` / `on_net_change` /
+/// `on_navigate` 전달) → 변화가 있었으면 다시 렌더.
+///
+/// keyed 슬롯 덕분에 사라진 인스턴스의 상태는 초기화된다.
+pub fn frame<C: Component>(ctx: &mut Ctx, props: &C::Props) -> Element {
+    ctx.begin_frame();
+    let mut tree = C::render(ctx, props);
+    for _ in 0..64 {
+        let tail = ctx.end_frame();
+        if tail.is_empty() {
+            break;
+        }
+        tail.run(&mut ctx.arena);
+        ctx.begin_frame();
+        tree = C::render(ctx, props);
+    }
+    tree
 }
 
 /// A component: pure function from state to an element tree.
@@ -81,7 +136,7 @@ pub trait Component {
 }
 
 /// Re-exported procedural macros.
-pub use elm_magic_macros::{css, ui, view};
+pub use elm_magic_macros::{css, store, store_fn, ui, view};
 
 /// Mount a component headlessly (no renderer, no runtime) for tests.
 pub use testing::{mount, mount_with};
@@ -100,14 +155,14 @@ where
 }
 
 pub mod prelude {
-    pub use crate::element::{Element, IntoElement, IntoElements};
-    pub use crate::state::{Arena, Ctx, State};
+    pub use crate::element::{Callback, Element, IntoElement, IntoElements};
+    pub use crate::state::{Arena, Ctx, FrameTail, State};
     pub use crate::testing::{mount, mount_with, TestApp};
     pub use crate::platform::{Headless, Platform};
-    pub use crate::{into_element, run};
+    pub use crate::{clone_value, frame, into_element, key_of, mock, mock_stream, nav_take, run};
     pub use crate::Component;
     pub use crate::style;
-    pub use elm_magic_macros::{css, ui, view};
+    pub use elm_magic_macros::{css, store, store_fn, ui, view};
 }
 
 /// `mount!(Counter)` — headless mount. `mount!(Counter, props)` — with props.

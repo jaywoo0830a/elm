@@ -56,14 +56,18 @@ fn main() {
 
 ```
 src/
-├── lib.rs        # public API (Component, mount!, prelude)
-├── element.rs    # Element enum + IntoElements (조건부/이터레이터 통일)
-├── state.rs      # Arena 슬롯, State<T> Copy 핸들, Ctx
-└── testing.rs    # 헤드리스 TestApp (click / type_ / press_enter / expect_text)
+├── lib.rs        # public API (Component, frame, mount!, prelude)
+├── element.rs    # Element enum + IntoElements + Callback (조건부/이터레이터 통일)
+├── state.rs      # Arena(지역 슬롯·store·keyed 경로), State<T> Copy 핸들, Ctx(프레임/구독)
+├── runtime.rs    # 효과·스트림 목 레지스트리 (스레드 로컬)
+└── testing.rs    # 헤드리스 TestApp (click / type_ / pump / emit / navigate / expect_text)
 crates/elm-magic-macros/
-├── src/jsx.rs    # JSX 토큰 변환기 (태그 → Element 생성 코드)
-├── src/view.rs   # view! — 매개변수 → 슬롯, 본문 → ui 변환
+├── src/jsx.rs    # JSX 토큰 변환기 (태그·이벤트·store·구독·콜백)
+├── src/view.rs   # view! — props Option<T>, 콜백/children 사전 바인딩, 슬롯
+├── src/store.rs  # #[store] / store_fn! — 접근자 + proc-macro 레지스트리
 └── src/lib.rs    # 매크로 진입점
+tests/            # counter todo effects lifecycle css mock stream raw platform
+                  # syntax timers widgets sugar store subs callbacks
 ```
 
 ## 테스트
@@ -85,6 +89,127 @@ cargo test
 | `{items.map(\|t\| <Row>...)}` | `into_elements((state.clone()).into_iter().map(...))` — 소유 반복 |
 | `{if x { A } else { B }}` | 분기마다 `into_elements(..)` → `Vec<Element>` 통일 (본문이면 `into_element` → `Fragment`) |
 | `<Counter start=0 />` | 인라인 렌더 + 슬롯 베이스 오프셋 (`SLOTS`) |
+
+## v0.5 — 전역 상태 · keyed 트리 · 구독 · 콜백 prop
+
+### `#[store]` 전역 상태 (사양서 4.2)
+
+```rust
+use elm_magic::prelude::*;
+
+#[store]
+struct App { count: i32, dark: bool }     // 기본값은 `Default::default()` (i32→0, bool→false)
+
+// 필드 기본값을 쓰고 싶으면 함수형 `store_fn!`
+elm_magic::store_fn! { Settings { level: i32 = 3, muted: bool = true } }
+
+elm_magic::view! {
+    fn Header() {
+        <Row>
+            "count: {app.count}"                                  // 어디서든 app.field
+            <Button on_click={app.count += 1}>"inc"</Button>       // 대입/증감도 그대로
+            <Button on_click={app.dark = !app.dark}>"theme"</Button>
+        </Row>
+    }
+}
+```
+
+- 슬롯은 아레나에 **이름 기반**(`"App.count"`)으로 저장 → 컴포넌트 사이에 공유.
+- `State::version(&arena)`으로 변경 추적(버전 카운터).
+- `#[store]`는 **사용하는 `view!`보다 위에** 선언한다 (proc-macro 레지스트리).
+- 주의: `#[store] struct X { a: i32 = 0 }` 문법은 rustc가 아직 불안정(필드 기본값)이라
+  속성 매크로에서는 쓸 수 없다 → `store_fn!`을 쓴다.
+
+### keyed 트리 · unmount (사양서 9.5)
+
+```rust
+elm_magic::view! {
+    fn ItemList(ids: Vec<i32> = vec![]) {
+        <Col>
+            {ids.map(|id| <Row key={id}><Item id={id} /></Row>)}   // key = 인스턴스 경로
+            <Button on_click={ids.reverse()}>"reverse"</Button>
+        </Col>
+    }
+}
+
+elm_magic::view! {
+    fn Session() {
+        on_unmount { app.closed += 1 }    // 사라질 때 실행
+        <Text>"session open"</Text>
+    }
+}
+```
+
+- 슬롯 키 = **인스턴스 경로**(`/<key 또는 @순번>:<컴포넌트>#<슬롯>`) → 순서가 바뀌어도 상태가 따라간다
+  (타입 이름이 경로에 들어가므로 자리가 바뀐 다른 컴포넌트와 식별자가 겹치지 않는다).
+- 사라진 경로의 슬롯은 **초기화**되고 `on_unmount`가 실행된다 (재마운트 시 상태 0부터).
+- key가 없어도 형제 순번으로 분리되므로 `<Col>` 안의 리스트 컴포넌트들이 슬롯을 섞지 않는다.
+
+### 구독 (사양서 5.3, 5.4)
+
+```rust
+elm_magic::view! {
+    fn Chat(room = String::from("lobby"), msgs: Vec<String> = vec![]) {
+        on_message(messages(room.clone()), m) { msgs.push(m); }   // 스트림 구독(인스턴스당 1회)
+        <Col>{msgs.map(|m| <Row>"{m}"</Row>)}</Col>
+    }
+}
+
+elm_magic::view! {
+    fn Toolbar() { <Button on_click={bus.emit(RefreshRequested)}>"refresh"</Button> }
+
+    fn DataTable(items: Vec<String> = vec![], hits = 0) {
+        on_event(RefreshRequested) { hits += 1 }                  // 이벤트 버스
+        on_net_change { online = net.is_online() }                // 네트워크 상태
+        on_navigate(|path| route = path)                          // 라우팅 (String 또는 라우트 타입)
+        <Col>"hits: {hits}"</Col>
+    }
+}
+```
+
+테스트에서 구동:
+
+```rust
+elm_magic::mock_stream!(app, messages, ["m1".to_string()]);  // 스트림 목
+app.pump();                    // 스트림 한 값
+app.emit("RefreshRequested");  // 이벤트 버스
+app.set_online(false);         // on_net_change
+app.navigate("/users/42");     // 경로(String)
+app.navigate_value(Route::User(42));  // 타입 있는 라우트
+```
+
+- `on_message(소스, 이름)` — 소스는 **실제 이터레이터/함수 호출**이어야 한다(서비스 객체 미구현).
+  `mock_stream!`은 첫 `pump()`에서 확인하므로 mount 후에 등록해도 된다.
+- `on_event(Name)` / `bus.emit(Name)`은 이름을 `stringify!`로 정규화해 맞춘다.
+
+### 콜백 prop + 컴포넌트 children (사양서 3.1)
+
+```rust
+elm_magic::view! {
+    fn ItemRow(item: Item, on_select: fn(i32)) {        // fn(T) = 콜백 prop
+        <Row on_click={on_select(item.id)}>"{item.name}"</Row>
+    }
+
+    fn List(items: Vec<Item> = vec![], selected = 0) {
+        <Col>
+            {items.map(|i| <ItemRow item={i} on_select={selected = _} />)}
+            "selected: {selected}"
+        </Col>
+    }
+
+    fn Card(title = String::new()) {
+        <Col>"card: {title}"{children}</Col>            // 자식 prop
+    }
+
+    fn Page() { <Card title="hi"><Text>"body"</Text></Card> }
+}
+```
+
+- prop은 전부 `Option<T>` — `None`이면 선언된 기본값, 필수 prop(`item: Item`)은
+  `mount!` 시 명확한 panic 메시지.
+- `on_*={...}`는 컴포넌트에서 **콜백 prop**으로 전개된다(`Callback<T>`, 호출부에서 클로저 생성).
+- `<Row on_click={…}>`처럼 컨테이너도 클릭 가능(헤드리스 `click`, egui 어댑터 모두).
+- 문자열 보간은 `{x}` 외에 `{x:?}`, `{x:.2}` 같은 서식 지정자도 지원.
 
 ## v0.4 — 문법 픽스 + 어휘 확장
 
@@ -197,22 +322,32 @@ elm_magic::view! {
 ## v0.4 제한
 
 - `on_change(x)`의 `x`는 `Clone + PartialEq` (변화 감지를 위해 값 비교).
-- `{_}`는 값 이벤트(`on_change`/`on_enter`)에서만 — `on_click` 등에는 전달값이 없다.
+- `{_}`는 값 이벤트(`on_change`/`on_enter`)와 **컴포넌트 콜백 prop**에서만 — `on_click` 등에는 전달값이 없다.
 - `state.remove(비정수)`는 `Vec::retain` + `PartialEq`로 전개된다(`items.remove(t)` = 값으로 삭제).
 - `items.iter()` / `items.map(…)`는 소유 반복(`into_iter`)이므로 아이템을 수정하려면
   `items` 쪽 메서드를 쓰거나 다시 `push`해야 한다 (`&mut` 이터레이션은 사양서 대상 아님).
-- 콜백 prop(`on_select: fn(Id)`)과 **사용자 컴포넌트의 children**은 아직 미구현
-  (children은 `<Modal>`처럼 빌트인만).
-- `Table`, `VirtualList`, `Scroll`, `Plot`, `Dock`, `Window`, `Sidebar` 등 어휘와
-  `Desktop` / `Web` / `Terminal` 플랫폼은 v0.5+ 과제 (egui 어댑터는 현재 17개 태그 매핑).
-- keyed 트리(`<Row key={…}>`)는 여전히 무시된다 (렌더 순서 기반 슬롯 오프셋).
+- `Table`, `VirtualList`, `Scroll`, `Plot`, `Dock`, `Window`, `Sidebar`, `Menu/Item`, `Fade` 등 어휘와
+  `Desktop` / `Web` / `Terminal` 플랫폼은 v0.6+ 과제 (egui 어댑터는 현재 17개 태그 매핑).
 - **리스트 아이템 필드 대입은 아직 안 된다**: `items.map(|t| …)`의 `t`는 값 복사본이므로
   `on_change={t.done = !t.done}` 같은 대입은 `E0594`가 난다. 대신 `items` 쪽 메서드를 쓴다
   (예: `<Check checked={t.done} on_change={items.toggle(&t)}>` — 아이템 편집/인덱스 추적은 다음 과제).
 - 한 행에서 **같은 아이템을 캡처하는 핸들러가 2개 이상**이면 `move` 캡처가 충돌한다.
   핸들러는 아이템당 하나만 두고, 나머지는 읽기(텍스트/`checked`)로 표현한다.
 
-디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` 전개 코드를 그대로 볼 수 있다
+## v0.5 제한
+
+- `#[store]` 필드 기본값은 `Default::default()` (속성 매크로 입력은 rustc가 구조체로 파싱하므로
+  필드 기본값 문법을 쓸 수 없다) → 명시적 기본값은 `store_fn!` 형태.
+- `#[store]`는 사용하는 `view!`보다 **위에** 선언해야 인식된다 (proc-macro 레지스트리).
+- `on_message(소스, …)`의 소스는 실제 이터레이터(함수 호출/변수)여야 한다 —
+  `ws`, `api` 같은 **서비스 객체는 미구현**. 목을 걸어도 실제 소스가 컴파일되어야 한다.
+- `on_event(Name)`은 `Name`을 문자열로 정규화해 맞춘다(`bus.emit`과 동일 규칙).
+- `on_navigate` 핸들러가 받는 값은 `String`(경로) 또는 `navigate_value`로 넣은 라우트 타입 —
+  타입이 다르면 런타임 panic.
+- 구독(`on_message`)은 **인스턴스당 한 번**만 등록된다(재구독은 unmount 후 재마운트로).
+- keyed 경로는 문자열(`"/<key>/@<n>#<slot>"`)이다 — 성능 최적화(해시/u32 경로)는 다음 과제.
+
+디버깅: `ELM_MAGIC_DUMP=1 cargo build`로 `view!` / `store` 전개 코드를 그대로 볼 수 있다
 (사양서 13장의 "`cargo expand` 필수" 항목 대체).
 
 전체 현황: `prototype/prototypes/implementation-status.md`

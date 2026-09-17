@@ -22,15 +22,47 @@ where
 /// Mount a component with explicit props.
 pub fn mount_with<C: Component>(props: C::Props) -> TestApp<C> {
     let mut ctx = Ctx::new();
-    let tree = C::render(&mut ctx, &props);
+    let tree = crate::frame::<C>(&mut ctx, &props);
     TestApp { ctx, props, tree }
 }
 
 impl<C: Component> TestApp<C> {
     fn rerender(&mut self) {
-        self.ctx.base = 0;
-        self.ctx.keys.clear();
-        self.tree = C::render(&mut self.ctx, &self.props);
+        self.tree = crate::frame::<C>(&mut self.ctx, &self.props);
+    }
+
+    /// `bus.emit(Name)` — 다음 프레임에서 `on_event` 핸들러가 실행된다 (사양서 5.3).
+    pub fn emit(&mut self, name: &str) {
+        self.ctx.arena.emit(name);
+        self.rerender();
+    }
+
+    /// `navigate("/users/42")` — `on_navigate` 핸들러에 경로(String)가 전달된다.
+    pub fn navigate(&mut self, path: &str) {
+        self.ctx.arena.navigate_path(path);
+        self.rerender();
+    }
+
+    /// 사용자 라우트 타입을 그대로 전달: `app.navigate_value(Route::User(42))`.
+    pub fn navigate_value<T: 'static>(&mut self, value: T) {
+        self.ctx.arena.navigate(value);
+        self.rerender();
+    }
+
+    /// 온라인/오프라인 전환 — `on_net_change` 핸들러가 실행된다.
+    pub fn set_online(&mut self, online: bool) {
+        self.ctx.arena.set_online(online);
+        self.rerender();
+    }
+
+    /// Register a stream mock (`mock_stream!(app, f, [..])`와 동일).
+    pub fn set_stream_mock<T: 'static>(&self, name: &str, values: Vec<T>) {
+        crate::runtime::set_stream_mock(name, values);
+    }
+
+    /// 살아있는 keyed 슬롯 수 — keyed 트리/unmount 검증용 (사양서 9.5).
+    pub fn keyed_slot_count(&self) -> usize {
+        self.ctx.arena.keyed_slot_count()
     }
 
     /// 아레나의 시계를 `ctx.now`에 맞춘다 — 효과의 `after <dur>`가 이 시계를 쓴다.
@@ -270,9 +302,7 @@ impl<C: Component> TestApp<C> {
 
     /// All visible text, one node per line.
     pub fn text(&self) -> String {
-        let mut out = Vec::new();
-        collect_text(&self.tree, &mut out);
-        out.join("\n")
+        self.tree.texts().join("\n")
     }
 
     /// Assert that the given text appears somewhere in the tree.
@@ -317,12 +347,23 @@ pub fn find_button_text(el: &Element, text: &str) -> Option<H> {
     find_button(el, text)
 }
 
-/// 클릭 가능한 요소(Button / Tab / Th)의 핸들러를 텍스트로 찾는다.
+/// 클릭 가능한 요소의 핸들러를 텍스트로 찾는다.
+///
+/// - `Button` / `Tab` / `Th`: 라벨이 정확히 일치
+/// - `Row` / `Col` / `Modal`(on_click): 서브트리 텍스트가 일치 (`<Row on_click>`)
 fn find_button(el: &Element, text: &str) -> Option<H> {
     if clickable_text(el) == Some(text) {
         if let Button { on_click, .. } | Tab { on_click, .. } | Th { on_click, .. } = el {
             return Some(on_click.clone());
         }
+    }
+    match el {
+        Row { on_click, .. } | Col { on_click, .. }
+            if on_click.is_some() && el.subtree_text() == text =>
+        {
+            return Some(on_click.clone());
+        }
+        _ => {}
     }
     children_of(el)?.iter().find_map(|c| find_button(c, text))
 }
@@ -381,37 +422,6 @@ fn find_check(el: &Element, label: &str) -> Option<(bool, BH)> {
     }
 }
 
-fn collect_text(el: &Element, out: &mut Vec<String>) {
-    match el {
-        Text { text, .. }
-        | Strong { text, .. }
-        | Button { text, .. }
-        | Tab { text, .. }
-        | Th { text, .. }
-        | Td { text, .. }
-        | Banner { text, .. } => out.push(text.clone()),
-        Input { value, .. } | TextArea { value, .. } => {
-            out.push(format!("[input: {}]", value))
-        }
-        Check { label, .. } => out.push(label.clone()),
-        Spinner { .. } => out.push("[spinner]".to_string()),
-        Divider { .. } => out.push("[divider]".to_string()),
-        Progress { value, .. } => out.push(format!("[progress: {}]", value)),
-        // `<Raw>` is ignored headless (사양서 7.3)
-        Raw { .. } => {}
-        Modal { children, .. } => {
-            out.push("[modal]".to_string());
-            for c in children {
-                collect_text(c, out);
-            }
-        }
-        Col { children, .. } | Row { children, .. } | Fragment { children } => {
-            for c in children {
-                collect_text(c, out);
-            }
-        }
-    }
-}
 
 fn dump(el: &Element, depth: usize, out: &mut String) {
     let pad = "  ".repeat(depth);

@@ -46,19 +46,32 @@ fn render_el(ui: &mut egui::Ui, el: &Element, arena: &mut Arena, pass: &mut Pass
         Element::Progress { value, .. } => {
             ui.add(egui::ProgressBar::new(*value as f32));
         }
-        Element::Col { children, .. } => {
-            ui.vertical(|ui| {
+        Element::Col { children, on_click, .. } => {
+            let inner = ui.vertical(|ui| {
                 for c in children {
                     render_el(ui, c, arena, pass);
                 }
             });
+            // 클릭 가능한 컨테이너 (`<Row on_click={…}>`)
+            if let Some(h) = on_click {
+                let resp = ui.interact(inner.response.rect, inner.response.id, egui::Sense::click());
+                if resp.clicked() {
+                    h(arena);
+                }
+            }
         }
-        Element::Row { children, .. } => {
-            ui.horizontal(|ui| {
+        Element::Row { children, on_click, .. } => {
+            let inner = ui.horizontal(|ui| {
                 for c in children {
                     render_el(ui, c, arena, pass);
                 }
             });
+            if let Some(h) = on_click {
+                let resp = ui.interact(inner.response.rect, inner.response.id, egui::Sense::click());
+                if resp.clicked() {
+                    h(arena);
+                }
+            }
         }
         Element::Button { text, disabled, on_click, .. } => {
             let resp = ui.add_enabled(!disabled, egui::Button::new(text.as_str()));

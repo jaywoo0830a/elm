@@ -10,6 +10,7 @@ struct Note {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 enum Status {
     Idle,
     Loading,
@@ -131,9 +132,10 @@ fn conditional_branches_unify_element_and_iterator() {
 #[test]
 fn match_arms_unify_with_banner_children() {
     let app = elm_magic::mount_with::<Feed>(FeedProps {
-        loading: false,
-        items: vec!["a".to_string(), "b".to_string()],
-        status: Status::Failed("boom".to_string()),
+        loading: Some(false),
+        items: Some(vec!["a".to_string(), "b".to_string()]),
+        status: Some(Status::Failed("boom".to_string())),
+        ..Default::default()
     });
     app.assert_text("a");
     app.assert_text("b");
@@ -155,8 +157,9 @@ elm_magic::view! {
 #[test]
 fn list_item_captured_in_event_handler() {
     let mut app = elm_magic::mount_with::<Picker>(PickerProps {
-        items: vec!["a".to_string(), "b".to_string()],
-        selected: String::new(),
+        items: Some(vec!["a".to_string(), "b".to_string()]),
+        selected: Some(String::new()),
+        ..Default::default()
     });
     app.click("b");
     app.assert_text("sel: b");
@@ -175,7 +178,7 @@ elm_magic::view! {
 
 #[test]
 fn iter_sugar_yields_owned_items() {
-    let app = elm_magic::mount_with::<Sum>(SumProps { values: vec![1.0, 2.0] });
+    let app = elm_magic::mount_with::<Sum>(SumProps { values: Some(vec![1.0, 2.0]), ..Default::default() });
     app.assert_text("1");
     app.assert_text("2");
     app.assert_text("doubled: 6");
@@ -192,6 +195,6 @@ elm_magic::view! {
 fn body_may_be_a_whole_conditional() {
     let app = elm_magic::mount!(Whole);
     app.assert_text("[spinner]");
-    let app = elm_magic::mount_with::<Whole>(WholeProps { loading: false });
+    let app = elm_magic::mount_with::<Whole>(WholeProps { loading: Some(false), ..Default::default() });
     app.assert_text("done");
 }

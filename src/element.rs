@@ -26,10 +26,12 @@ pub enum Element {
     Col {
         class: Vec<String>,
         children: Vec<Element>,
+        on_click: Option<Handler>,
     },
     Row {
         class: Vec<String>,
         children: Vec<Element>,
+        on_click: Option<Handler>,
     },
     Button {
         text: String,
@@ -139,6 +141,52 @@ impl Element {
         }
     }
 
+    /// 요소 서브트리의 텍스트 노드들 (헤드리스 테스트의 `text()`/`assert_*` 기반).
+    pub fn texts(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_texts(&mut out);
+        out
+    }
+
+    fn collect_texts(&self, out: &mut Vec<String>) {
+        match self {
+            Element::Text { text, .. }
+            | Element::Strong { text, .. }
+            | Element::Button { text, .. }
+            | Element::Tab { text, .. }
+            | Element::Th { text, .. }
+            | Element::Td { text, .. }
+            | Element::Banner { text, .. } => out.push(text.clone()),
+            Element::Input { value, .. } | Element::TextArea { value, .. } => {
+                out.push(format!("[input: {}]", value))
+            }
+            Element::Check { label, .. } => out.push(label.clone()),
+            Element::Spinner { .. } => out.push("[spinner]".to_string()),
+            Element::Divider { .. } => out.push("[divider]".to_string()),
+            Element::Progress { value, .. } => out.push(format!("[progress: {}]", value)),
+            // `<Raw>` is ignored headless (사양서 7.3)
+            Element::Raw { .. } => {}
+            Element::Modal { children, .. } => {
+                out.push("[modal]".to_string());
+                for c in children {
+                    c.collect_texts(out);
+                }
+            }
+            Element::Col { children, .. }
+            | Element::Row { children, .. }
+            | Element::Fragment { children } => {
+                for c in children {
+                    c.collect_texts(out);
+                }
+            }
+        }
+    }
+
+    /// 요소 서브트리의 텍스트를 이어 붙인다 (클릭 가능한 컨테이너 매칭용).
+    pub fn subtree_text(&self) -> String {
+        self.texts().join("")
+    }
+
     /// 자식 요소를 갖는 컨테이너면 그 목록을 돌려준다 (트리 순회용).
     pub fn children(&self) -> Option<&[Element]> {
         match self {
@@ -177,6 +225,38 @@ where
 {
     fn into_elements(self) -> Vec<Element> {
         self.into_iter().flat_map(IntoElements::into_elements).collect()
+    }
+}
+
+/// `props.on_select(item.id)` — 컴포넌트가 부모에게 값을 올려보내는 콜백
+/// (사양서 3.1의 `on_select: fn(Id)`).
+///
+/// `Rc<dyn Fn>`이라 클론이 싸고, props가 `'static` 클로저를 담을 수 있다.
+pub struct Callback<T> {
+    f: Rc<dyn Fn(&mut Arena, T)>,
+}
+
+impl<T> Clone for Callback<T> {
+    fn clone(&self) -> Self {
+        Callback { f: Rc::clone(&self.f) }
+    }
+}
+
+impl<T> Callback<T> {
+    pub fn new(f: impl Fn(&mut Arena, T) + 'static) -> Self {
+        Callback { f: Rc::new(f) }
+    }
+
+    /// 호출: `on_select(item.id)` → `cb.call(arena, item.id)`.
+    pub fn call(&self, arena: &mut Arena, value: T) {
+        (self.f)(arena, value)
+    }
+}
+
+impl<T> Default for Callback<T> {
+    /// 기본값: 아무 일도 하지 않는 콜백 (prop을 주지 않았을 때).
+    fn default() -> Self {
+        Callback { f: Rc::new(|_, _| {}) }
     }
 }
 
