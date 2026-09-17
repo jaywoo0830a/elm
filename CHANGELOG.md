@@ -3,53 +3,79 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
-## [Unreleased] — v0.6 스타일
+## [0.6.0] — 2026-09-17
 
-`css!`가 **등록만 하고 렌더링되지 않던** 상태를 끝낸다. egui 어댑터가 스타일을 실제로 적용한다.
+`css!` no longer merely registers rules — styles actually resolve and render.
+Selector matching, cascade, inheritance, and **36 properties across 14 tags**.
 
-### Added — 타입 있는 스타일 (사양서 6.1)
+### Added — CSS behaviour (spec 6.1–6.3)
 
-- `StyleSpec`(선언: 팔레트 해석 전) / `ResolvedStyle`(확정: 색까지 해석) 2단 구조.
-  해석이 egui를 모르므로 **스타일 계약 대부분이 헤드리스 테스트**로 검증된다
-- `Palette` + `Token` 8종(`primary` `on_primary` `surface` `background` `text` `text_dim` `error` `warn`),
-  `Color`, `Edges`(1·2·4값 숏핸드), `Element::tag()`, `Element::resolved_style(&Palette)`
-- `style::lookup_class` / `lookup_tag` / `resolve` — 캐스케이드는 **태그 < 클래스(나열 순서, 뒤가 이김)**
+- **Five selector forms + states**: `button` (tag), `.card` (class), `*` (universal),
+  `.a.b` (compound), `.card Button` (descendant), `Col > Row` (direct child),
+  `.a, .b` (selector list), `button:hover` (state)
+- **String selectors**: `".card .muted" { ... }` keeps whitespace verbatim, so real CSS
+  descendant chains work. Rust tokens do not preserve spaces, so a class-to-class
+  descendant must use this form (`.card.muted` means *compound*)
+- **Cascade = specificity → declaration order**, like CSS. The order of names inside
+  `class="b a"` no longer matters — the rule declared later wins
+- **Inheritance**: `color` `font-size` `weight` `font-style` `font-family` `line-height`
+  `letter-spacing` `text-decoration` `text-align` `text-transform`
+- **States**: `:hover` `:active` `:focus` `:disabled`. The adapter remembers each node's
+  rect and focus in egui memory and resolves state on the next frame — the same
+  mechanism egui itself uses for interaction, so there is no visible lag
+- Public types `Selector` / `Part` / `Node` / `State` / `StateMask` / `Comb`, plus
+  `Element::resolved_style_in(ancestors, state, inherited, palette)`
 
-### Added — egui 적용 (6개 태그, 9개 속성)
+### Added — 9 → 36 properties
 
-- 태그: `Col` `Row` `Text` `Strong` `Button` `Banner`
-- 속성: `gap` `padding` `margin` `bg` `color` `radius` `font-size` `weight` `text-decoration`
-- `render_with_palette(ui, tree, arena, &theme)` — 기본은 egui 밝기에 따라 `Palette::dark()/light()`
-- `Pass::styles` — 스타일이 적용된 엘리먼트를 기록해 어댑터 테스트가 검증할 수 있다
-- `<Banner>` 기본 색이 하드코딩 RGB에서 **팔레트 토큰**(`error`/`warn`/`primary`)으로 바뀌어 테마를 따른다
+- Layout: `gap` `row-gap` `column-gap` `padding` `margin` `width` `height` `min-width`
+  `min-height` `max-width` `max-height` `align` `justify` `wrap` `display` `visibility`
+- Paint: `bg` `fill` `border-width` `border-color` `radius` `shadow` `shadow-color` `opacity`
+- Text: `color` `font-size` `line-height` `letter-spacing` `weight` `font-style`
+  `font-family` `text-decoration` `text-align` `text-transform` `truncate`
+- Interaction: `cursor`
+- New value types: `Len` (`240` / `fill` / `auto`), `Align`, `Transform`, `Cursor`, `Shadow`
+- `display: none` renders nothing at all; `visibility: hidden` keeps the space
 
-### Added — `class` 속성 정합성
+### Added — palette 8 → 14 tokens, styled tags 6 → 14
 
-- `IntoClasses` 트레이트: `class={문자열}` / `{String}` / `{Vec<String>}` / `{Vec<&str>}` / `{[&str; N]}`
-  → 사양서 6.2의 `class={if error { "error" } else { "ok" }}`가 이제 컴파일된다
+- Tokens added: `surface_alt` `success` `info` `border` `shadow` `overlay`
+  (alpha support via `Color::rgba`)
+- Tags added: `Tab` `Th` `Td` `Check` `Spinner` `Divider` `Progress` `Modal`
+  (on top of `Col` `Row` `Text` `Strong` `Button` `Banner`)
 
-### Fixed — `css!` 정합성 (테스트 우선)
+### Added — style contract types (spec 6.1)
 
-- **클래스 규약 통일**: `css!`는 `.card`(점 포함)로 등록하는데 `Element::class`와 테스트 셀렉터는 `"card"`를
-  썼다 → `lookup(".card")` ≡ `lookup("card")`. 태그/클래스는 **키 공간을 분리**해
-  `button { … }`(태그)와 `.button { … }`(클래스)가 서로를 덮지 않는다
-- **`class="a b"`가 매칭 불가**였다: `vec!["a b"]` 하나로 들어가 어떤 셀렉터와도 안 맞던 것을 공백 분리
-- **조용한 무시 제거**: 모르는 속성, `:` 없는 선언, 값 종류 불일치, 한 블록 안의 중복 셀렉터/속성이
-  모두 **컴파일 에러**가 되었다 (지원 목록을 메시지에 보여준다)
-- 태그 셀렉터는 대소문자를 무시한다 (`Button` ≡ `button`)
+- Two-stage `StyleSpec` (declaration) / `ResolvedStyle` (resolved). Resolution is
+  platform-independent, so most of the style contract is covered by headless tests
+- `Palette`, `Color`, `Edges` (1/2/4-value shorthand), `Element::tag()`, `resolved_style()`
+- `style::lookup` / `lookup_class` / `lookup_tag` / `resolve` / `resolve_nodes` / `selectors`
+- `IntoClasses` now also covers `Option<T>` and `&T`
+
+### Fixed — `css!` consistency
+
+- Class naming unified: `.card` ≡ `card`; tag and class namespaces no longer collide
+  (`button { ... }` vs `.button { ... }`)
+- `class="a b"` used to match nothing; it is now split on whitespace
+- No more silent drops: unknown properties/values, malformed selectors, and duplicates
+  inside one block are compile errors
+- Tag selectors are case-insensitive (`Button` ≡ `button`)
 
 ### Tests
 
-- `tests/style.rs` 신규 (16) — 캐스케이드·팔레트·숏핸드·태그·`IntoClasses`
-- `tests/css.rs` 3 → 12 — 규약 통일·다중 클래스·조건부 클래스·**토큰 어휘 대조**
-- `crates/elm-magic-egui/tests/adapter.rs` 3 → 8 — 페인트 명령에 배경색이 실제로 칠해지는지까지 확인
-- `cargo test` = **126개**, `cargo test --workspace --all-features` = **130개**
+- `tests/style.rs` new, 25 — selector parsing, specificity, descendant/child, states,
+  inheritance, all 36 properties, token vocabulary
+- `tests/css.rs` 3 → 13 — registration rules, multi/conditional classes, five selector forms
+- egui `tests/adapter.rs` 3 → 7 — `Pass::styles`, `display:none`, theme palette
+- `cargo test --workspace` = **135**, `--all-features` = **139**
+- Adapter tests only inspect our own types (`Pass::styles`), so they survive platform
+  version bumps
 
 ### Known limitations
 
-- 스타일 적용 태그 6개 / 속성 9개만 (`Tab` `Th` `Td` `Input` 등은 아직 무시)
-- `:hover` / `:focus` / `:disabled` 상태 셀렉터, 자식·후손 셀렉터, CSS 상속·스펙티시티 없음
-- `css!` 등록은 `.init_array` ctor — wasm은 다른 메커니즘 필요
+- `class` on `Input` / `TextArea` / `Raw` is still ignored
+- No inline styles (`style="..."`), no `transition`, no `:not()` / `:nth-child()`
+- `css!` registers through an `.init_array` constructor — wasm needs another mechanism
 
 ## [0.5.0] — 2026-09-17
 

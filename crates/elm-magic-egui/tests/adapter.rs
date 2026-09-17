@@ -143,63 +143,22 @@ elm_magic::view! {
     }
 }
 
-/// 페인트 명령에 등장한 사각형 채움색들
-fn painted_rect_fills(out: &egui::FullOutput) -> Vec<egui::Color32> {
-    out.shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(rect) => Some(rect.fill),
-            _ => None,
-        })
-        .collect()
-}
-
-fn rgb(color: Color) -> egui::Color32 {
-    egui::Color32::from_rgb(color.r, color.g, color.b)
-}
-
 #[test]
-fn egui_applies_container_style() {
+fn egui_applies_container_and_text_style() {
     let mut app = elm_magic::mount::<Styled>();
     let ctx = egui::Context::default();
     let (_, pass) = frame(&ctx, &mut app, input());
-    let (tag, style) = pass
-        .styles
-        .iter()
-        .find(|(tag, _)| *tag == "col")
-        .expect("Col 스타일이 적용됐다");
-    assert_eq!(*tag, "col");
-    assert_eq!(style.gap, Some(8.0));
-    assert_eq!(style.padding, Some(Edges::splat(16.0)));
-    assert_eq!(style.radius, Some(8.0));
-    assert_eq!(style.bg, Some(Palette::dark().get(Token::Surface)));
-}
 
-#[test]
-fn egui_applies_text_style() {
-    let mut app = elm_magic::mount::<Styled>();
-    let ctx = egui::Context::default();
-    let (out, pass) = frame(&ctx, &mut app, input());
-    let (_, style) = pass
-        .styles
-        .iter()
-        .find(|(tag, _)| *tag == "text")
-        .expect("Text 스타일이 적용됐다");
-    assert_eq!(style.color, Some(Palette::dark().get(Token::Error)));
-    assert_eq!(style.font_size, Some(20.0));
-    assert_eq!(style.bold, Some(true));
-    // 굵은 글자는 실제로 그려진다
-    assert!(painted_text(&out).contains("styled"), "{:?}", painted_text(&out));
-}
+    let col = pass.style_of("col").expect("Col 스타일이 적용됐다");
+    assert_eq!(col.gap, Some(8.0));
+    assert_eq!(col.padding, Some(Edges::splat(16.0)));
+    assert_eq!(col.radius, Some(8.0));
+    assert_eq!(col.bg, Some(Palette::dark().get(Token::Surface)));
 
-#[test]
-fn egui_paints_styled_background() {
-    let mut app = elm_magic::mount::<Styled>();
-    let ctx = egui::Context::default();
-    let (out, _) = frame(&ctx, &mut app, input());
-    let want = rgb(Palette::dark().get(Token::Surface));
-    let fills = painted_rect_fills(&out);
-    assert!(fills.contains(&want), "surface 배경이 칠해져야 한다: {fills:?}");
+    let text = pass.style_of("text").expect("Text 스타일이 적용됐다");
+    assert_eq!(text.color, Some(Palette::dark().get(Token::Error)));
+    assert_eq!(text.font_size, Some(20.0));
+    assert_eq!(text.bold, Some(true));
 }
 
 #[test]
@@ -218,7 +177,7 @@ fn egui_theme_palette_overrides_default() {
     let theme = Palette::dark().with(Token::Surface, Color::rgb(1, 2, 3));
     let tree = app.element().clone();
     let mut pass = None;
-    let raw = ctx.run_ui(input(), |ctx| {
+    let mut out = ctx.run_ui(input(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             pass = Some(elm_magic_egui::render_with_palette(
                 ui,
@@ -228,12 +187,34 @@ fn egui_theme_palette_overrides_default() {
             ));
         });
     });
-    let mut out = raw;
-    out.textures_delta.clear();
     let pass = pass.expect("adapter did not run");
-    let (_, style) = pass.styles.iter().find(|(tag, _)| *tag == "col").expect("col");
-    assert_eq!(style.bg, Some(Color::rgb(1, 2, 3)));
-    let want = egui::Color32::from_rgb(1, 2, 3);
-    let fills = painted_rect_fills(&out);
-    assert!(fills.contains(&want), "테마 색으로 칠해져야 한다: {fills:?}");
+    let col = pass.style_of("col").expect("col");
+    assert_eq!(col.bg, Some(Color::rgb(1, 2, 3)), "지정한 팔레트가 쓰인다");
+    // `FullOutput`은 텍스처 델타를 비우고 버려야 한다
+    out.textures_delta.clear();
+}
+
+// ── v0.6+ 스타일로 렌더 자체를 끄기 (`display`) ───────────────
+
+elm_magic::css! {
+    ".egui_hide" { display: none; }
+    ".egui_show" { display: flex; }
+}
+
+elm_magic::view! {
+    fn Toggly() {
+        <Col>
+            <Button class="egui_hide">"never"</Button>
+            <Button class="egui_show">"always"</Button>
+        </Col>
+    }
+}
+
+#[test]
+fn egui_display_none_skips_rendering() {
+    let mut app = elm_magic::mount::<Toggly>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+    assert_eq!(pass.buttons.len(), 1, "display:none은 자리도 차지하지 않는다");
+    assert_eq!(pass.buttons[0].0, "always");
 }

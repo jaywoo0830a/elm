@@ -10,17 +10,23 @@ elm_magic::css! {
     .button { bg: warn; }
 }
 
-// 팔레트 토큰 8종 — `Token::ALL`과 어긋나면
+// 팔레트 토큰 14종 — `Token::ALL`과 어긋나면
 // `css_token_vocabulary_matches_core`가 잡는다.
 elm_magic::css! {
     .tok_primary { bg: primary; }
     .tok_on_primary { bg: on_primary; }
     .tok_surface { bg: surface; }
+    .tok_surface_alt { bg: surface_alt; }
     .tok_background { bg: background; }
     .tok_text { bg: text; }
     .tok_text_dim { bg: text_dim; }
     .tok_error { bg: error; }
     .tok_warn { bg: warn; }
+    .tok_success { bg: success; }
+    .tok_info { bg: info; }
+    .tok_border { bg: border; }
+    .tok_shadow { bg: shadow; }
+    .tok_overlay { bg: overlay; }
 }
 
 #[test]
@@ -133,4 +139,29 @@ fn css_class_accepts_string_and_list() {
 fn css_class_is_empty_when_absent() {
     let el = elm_magic::ui! { <Text>"hi"</Text> };
     assert!(el.class().is_empty());
+}
+
+// ── 셀터 5형태 (토큰 / 문자열 / 결합자 / 상태 / 그룹) ─────
+
+elm_magic::css! {
+    * { margin: 1; }
+    Col > Row { gap: 3; }
+    ".a .b" { gap: 2; }
+    button:hover { bg: surface; }
+    ".x, .y" { gap: 4; }
+}
+
+#[test]
+fn css_selector_forms_register() {
+    let get = |sel: &str, key: &str| {
+        elm_magic::style::lookup(sel)
+            .unwrap_or_else(|| panic!("{sel} 미등록"))
+            .get(key)
+    };
+    assert_eq!(get("*", "margin").as_deref(), Some("1"), "전체 렉터");
+    assert_eq!(get("Col>Row", "gap").as_deref(), Some("3"), "자식은 `>`로 (공백 없이)");
+    assert_eq!(get(".a .b", "gap").as_deref(), Some("2"), "문자열 렉터는 공백 보존");
+    assert_eq!(get("button:hover", "bg").as_deref(), Some("surface"), "상태");
+    assert_eq!(get(".x", "gap").as_deref(), Some("4"), "그룹은 각각 등록");
+    assert_eq!(get(".y", "gap").as_deref(), Some("4"));
 }

@@ -3,7 +3,7 @@
 // egui 없이 **순수 함수만** 검증한다: `resolve()`가 태그/클래스를 합쳐
 // `ResolvedStyle`을 만드는 계약 전체가 여기에 있다.
 
-use elm_magic::style::{self, Color, Edges, Palette, Token};
+use elm_magic::style::{self, Color, Edges, Palette, State, Token};
 
 elm_magic::css! {
     .resolve_card { gap: 8; padding: 16; bg: surface; radius: 8; }
@@ -16,6 +16,40 @@ elm_magic::css! {
     .resolve_box { margin: 0 -8; padding: 8 16 4 2; }
     .resolve_px { gap: 12px; font-size: 18px; }
     button { radius: 6; bg: primary; }
+}
+
+// 렉터 · 상속 · 상태 (v0.6+)
+elm_magic::css! {
+    // 태그 형태: 인접한 단어는 후손, `>`는 직계 자식, 붙은 클래스는 복합
+    .sel_root Button { color: text_dim; font-size: 12; }
+    .sel_root > Text { padding: 4; }
+    // 문자열 형태: 공백까지 그대로 (진짜 CSS)
+    ".sel_root .sel_leaf" { color: info; }
+    ".sel_root .sel_leaf:hover" { color: error; }
+    ".sel_root .sel_leaf:disabled" { color: warn; }
+    .sel_root { color: success; font-size: 20; padding: 8; }
+    .sel_leaf { font-size: 12; }
+    .inh_root { color: success; font-size: 20; padding: 8; }
+    .inh_leaf { font-size: 12; }
+    .merge_a, .merge_b { gap: 3; }
+}
+
+// 속성 36종 전부 (한 규칙에 선언 → `pairs()`로 한 번에 확인)
+elm_magic::css! {
+    .everything {
+        gap: 6; row-gap: 4; column-gap: 8;
+        padding: 8 16; margin: 0 4;
+        width: 240; height: fill; min-width: 100; max-height: 400;
+        align: center; justify: end; wrap: true;
+        display: none; visibility: hidden;
+        bg: surface; fill: primary;
+        border-width: 2; border-color: border; radius: 10;
+        shadow: 4 8; shadow-color: shadow; opacity: 0.5;
+        color: text_dim; font-size: 14; line-height: 20; letter-spacing: 0.5;
+        weight: bold; font-style: italic; font-family: monospace;
+        text-decoration: line-through; text-align: center; text-transform: uppercase;
+        truncate: true; cursor: pointer;
+    }
 }
 
 fn style_of(classes: &[&str]) -> style::ResolvedStyle {
@@ -40,13 +74,15 @@ fn resolve_reads_class_declarations() {
 }
 
 #[test]
-fn resolve_later_class_wins() {
-    let s = style_of(&["resolve_card", "resolve_loud"]);
-    assert_eq!(s.gap, Some(32.0), "나열 순서 뒤가 이긴다");
-    assert_eq!(s.padding, Some(Edges::splat(16.0)), "안 덮은 속성은 남는다");
+fn resolve_cascade_follows_css() {
+    // CSS와 같다: `class` 나열 순서가 아니라 **규칙 선언 순서**가 이긴다.
+    // (`.resolve_card`가 먼저, `.resolve_loud`가 나중에 선언다)
+    let a = style_of(&["resolve_card", "resolve_loud"]);
+    assert_eq!(a.gap, Some(32.0), "나중 규칙이 이긴다");
+    assert_eq!(a.padding, Some(Edges::splat(16.0)), "안 은 속성은 남는다");
 
-    let reversed = style_of(&["resolve_loud", "resolve_card"]);
-    assert_eq!(reversed.gap, Some(8.0));
+    let b = style_of(&["resolve_loud", "resolve_card"]);
+    assert_eq!(b.gap, Some(32.0), "class 나열 순서는 캐스케이드에 영향 없다");
 }
 
 #[test]
@@ -196,6 +232,211 @@ fn into_classes_normalizes_inputs() {
     assert_eq!(vec!["a b", "c"].into_classes(), ["a", "b", "c"]);
     assert_eq!(["a", "b"].into_classes(), ["a", "b"]);
     assert_eq!(Vec::<String>::new().into_classes(), Vec::<String>::new());
+}
+
+#[test]
+fn selector_parsing_specificity_and_matching() {
+    use style::{Comb, Node, Selector, State};
+
+    let sp = |s: &str| Selector::parse(s).unwrap().specificity();
+    assert_eq!(sp("*"), (0, 0));
+    assert_eq!(sp("button"), (0, 1));
+    assert_eq!(sp(".card"), (1, 0));
+    assert_eq!(sp(".a.b.c"), (3, 0));
+    assert_eq!(sp(".card Button"), (1, 1));
+    assert_eq!(sp("button:hover"), (1, 1));
+    assert_eq!(sp(".a .b > c:hover"), (3, 1));
+
+    let sel = Selector::parse(".a.b > button:hover").unwrap();
+    assert_eq!(sel.parts.len(), 2);
+    assert_eq!(sel.combs, [Comb::Child]);
+    let ab = vec!["a".to_string(), "b".to_string()];
+    let none: Vec<String> = vec![];
+    let parent = Node::new("col", &ab);
+    let child = Node::new("button", &none);
+    let hover = State::new(true, false, false, false);
+    assert!(sel.matches(&[child, parent], hover));
+    assert!(!sel.matches(&[child, parent], State::NONE), ":hover 필요");
+    assert!(!sel.matches(&[parent, child], hover), "자신이 먼저");
+    assert!(!sel.matches(&[child], hover), "조상 필요");
+
+    // 깨진 셀터는 None
+    for bad in ["> a", "a >", ":nope", "..a", "a b >", "", "  "] {
+        assert!(Selector::parse(bad).is_none(), "`{bad}`는 파싱 실패해야 한다");
+    }
+}
+
+#[test]
+fn descendant_and_child_selectors_use_the_tree() {
+    let tree = elm_magic::ui! {
+        <Col class="sel_root">
+            <Text class="sel_leaf">"직계"</Text>
+            <Row><Text class="sel_leaf">"손자"</Text></Row>
+            <Button>"go"</Button>
+        </Col>
+    };
+    let kids = tree.children().expect("children");
+    let direct = &kids[0];
+    let row = &kids[1];
+    let deep = &row.children().expect("row children")[0];
+    let button = &kids[2];
+    let p = Palette::dark();
+
+    // 직계는 `.sel_root > Text`가 맞는다
+    let s = direct.resolved_style_in(&[&tree], State::NONE, None, &p);
+    assert_eq!(s.padding, Some(Edges::splat(4.0)), "`.sel_root > Text`");
+
+    // 손자는 `>`가 안 맞고 후손은 맞는다
+    let deep_s = deep.resolved_style_in(&[row, &tree], State::NONE, None, &p);
+    assert_eq!(deep_s.padding, None, "`>`는 직계만 — Row가 끼면 안 맞는다");
+    assert_eq!(deep_s.color, Some(p.get(Token::Info)), "후손은 레벨을 건너다");
+    assert_eq!(deep_s.font_size, Some(12.0), "자기 규칙이 상속을 이긴다");
+
+    // 토큰 형태 후손(`.sel_root Button`) + 태그 규칙
+    let bs = button.resolved_style_in(&[&tree], State::NONE, None, &p);
+    assert_eq!(bs.color, Some(p.get(Token::TextDim)));
+    assert_eq!(bs.font_size, Some(12.0));
+    assert_eq!(bs.radius, Some(6.0), "`button` 태그 규칙(다른 블록)도 함께");
+
+    // 조상이 없으면 후손/자식은 안 맞는다
+    assert_eq!(direct.resolved_style_in(&[], State::NONE, None, &p).padding, None);
+}
+
+#[test]
+fn state_selectors_gate_on_runtime_state() {
+    let tree = elm_magic::ui! { <Col class="sel_root"><Text class="sel_leaf">"x"</Text></Col> };
+    let leaf = &tree.children().expect("children")[0];
+    let p = Palette::dark();
+
+    let plain = leaf.resolved_style_in(&[&tree], State::NONE, None, &p);
+    assert_eq!(plain.color, Some(p.get(Token::Info)));
+
+    let hovered = leaf.resolved_style_in(&[&tree], State::new(true, false, false, false), None, &p);
+    assert_eq!(hovered.color, Some(p.get(Token::Error)), ":hover가 이긴다");
+
+    let off = leaf.resolved_style_in(&[&tree], State::new(false, false, false, true), None, &p);
+    assert_eq!(off.color, Some(p.get(Token::Warn)), ":disabled");
+}
+
+#[test]
+fn inheritable_properties_flow_down() {
+    let tree = elm_magic::ui! {
+        <Col class="inh_root"><Row class="inh_leaf"><Text class="inh_leaf">"x"</Text></Row></Col>
+    };
+    let row = &tree.children().expect("children")[0];
+    let text = &row.children().expect("children")[0];
+    let p = Palette::dark();
+
+    let root = tree.resolved_style_in(&[], State::NONE, None, &p);
+    assert_eq!(root.color, Some(p.get(Token::Success)));
+    assert_eq!(root.padding, Some(Edges::splat(8.0)));
+
+    let row_style = row.resolved_style_in(&[&tree], State::NONE, Some(&root), &p);
+    assert_eq!(row_style.color, Some(p.get(Token::Success)), "color는 상속");
+    assert_eq!(row_style.font_size, Some(12.0), "자기 규칙이 상속을 이다");
+    assert_eq!(row_style.padding, None, "padding은 상속되지 않는다");
+
+    let text_style = text.resolved_style_in(&[row, &tree], State::NONE, Some(&row_style), &p);
+    assert_eq!(text_style.color, Some(p.get(Token::Success)), "2단계 상속");
+    assert_eq!(text_style.font_size, Some(12.0));
+    assert_eq!(text_style.padding, None);
+}
+
+#[test]
+fn extended_properties_are_parsed() {
+    let props = style::lookup_class("everything").expect(".everything");
+    let got: Vec<(String, String)> = props.pairs();
+    let want = [
+        ("gap", "6"),
+        ("row-gap", "4"),
+        ("column-gap", "8"),
+        ("padding", "8 16"),
+        ("margin", "0 4"),
+        ("width", "240"),
+        ("height", "fill"),
+        ("min-width", "100"),
+        ("max-height", "400"),
+        ("align", "center"),
+        ("justify", "end"),
+        ("wrap", "true"),
+        ("display", "none"),
+        ("visibility", "hidden"),
+        ("bg", "surface"),
+        ("fill", "primary"),
+        ("border-width", "2"),
+        ("border-color", "border"),
+        ("radius", "10"),
+        ("shadow", "0 4 8"),
+        ("shadow-color", "shadow"),
+        ("opacity", "0.5"),
+        ("color", "text_dim"),
+        ("font-size", "14"),
+        ("line-height", "20"),
+        ("letter-spacing", "0.5"),
+        ("weight", "bold"),
+        ("font-style", "italic"),
+        ("font-family", "monospace"),
+        ("text-decoration", "line-through"),
+        ("text-align", "center"),
+        ("text-transform", "uppercase"),
+        ("truncate", "true"),
+        ("cursor", "pointer"),
+    ];
+    let want: Vec<(String, String)> =
+        want.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn extended_properties_resolve_to_typed_values() {
+    let s = style_of(&["everything"]);
+    assert_eq!(s.width, Some(style::Len::Px(240.0)));
+    assert_eq!(s.height, Some(style::Len::Fill));
+    assert_eq!(s.min_width, Some(100.0));
+    assert_eq!(s.max_height, Some(400.0));
+    assert_eq!(s.align, Some(style::Align::Center));
+    assert_eq!(s.justify, Some(style::Align::End));
+    assert_eq!(s.wrap, Some(true));
+    assert!(s.is_display_none(), "display: none");
+    assert_eq!(s.hidden, Some(true), "visibility: hidden");
+    assert_eq!(s.border_width, Some(2.0));
+    assert_eq!(s.shadow, Some(style::Shadow { dx: 0.0, dy: 4.0, blur: 8.0, spread: 0.0 }));
+    assert_eq!(s.opacity, Some(0.5));
+    assert_eq!(s.transform, Some(style::Transform::Upper));
+    assert_eq!(s.cursor, Some(style::Cursor::Pointer));
+    assert_eq!(s.line_height, Some(20.0));
+    assert_eq!(s.letter_spacing, Some(0.5));
+    assert_eq!(s.italic, Some(true));
+    assert_eq!(s.mono, Some(true));
+    assert_eq!(s.text_align, Some(style::Align::Center));
+    assert_eq!(s.truncate, Some(true));
+    assert_eq!(s.border_color, Some(Palette::dark().get(Token::Border)));
+    assert_eq!(s.shadow_color, Some(Palette::dark().get(Token::Shadow)));
+    assert_eq!(s.row_gap(), Some(4.0), "row-gap이 gap을 이긴다");
+    assert_eq!(s.column_gap(), Some(8.0));
+}
+
+#[test]
+fn selector_group_registers_each_selector() {
+    for name in ["merge_a", "merge_b"] {
+        let props = style::lookup_class(name).unwrap_or_else(|| panic!(".{name}"));
+        assert_eq!(props.get("gap").as_deref(), Some("3"));
+        assert_eq!(props.selector(), format!(".{name}"));
+    }
+}
+
+#[test]
+fn text_transform_and_into_classes_extras() {
+    use style::{IntoClasses, Transform};
+    assert_eq!(Transform::Upper.apply("hi there"), "HI THERE");
+    assert_eq!(Transform::Lower.apply("HI"), "hi");
+    assert_eq!(Transform::Capitalize.apply("hi there"), "Hi There");
+    assert_eq!(Transform::None.apply("hi"), "hi");
+
+    let owned = String::from("a b");
+    assert_eq!((&owned).into_classes(), ["a", "b"], "&T");
+    assert_eq!(Some("a b").into_classes(), ["a", "b"], "Option");
+    assert_eq!(Option::<&str>::None.into_classes(), Vec::<String>::new());
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5.0: 96개(기본) / 100개(`--all-features`) → **v0.6: 126개 / 130개**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5.0: 96개(기본) / 100개(`--all-features`) → **v0.6: 135개 / 139개**
 
 ---
 
@@ -41,7 +41,7 @@ rustc --edition 2021 --test --emit=metadata \
 | 상태 | 매개변수 → 슬롯, `n += 1` / `-=`, `x = y`, `_`(on_change / on_enter), `items.push(x)`, `;` 다중문장, `let` 파생값, `items.map(…)`, 중첩 컴포넌트 + props | `tests/counter.rs`, `tests/todo.rs`, `tests/effects.rs` |
 | 뷰 | `Col` / `Row` / `Text` / `Button` / `Input` / `Raw`, `class="x"`, `class={if …}`, `disabled={…}`, `{if …}`, `{match …}`(arm 타입이 같을 때) | `jsx.rs:1093-1140` |
 | 효과 | `a, b <- f(…)`, 스트림 `expr -> slot { … }` + `pump()`, `on_mount`, `on_key("Ctrl+S")`, `on_tick(정수)`, `on_change(x) after 정수` | `tests/{effects,stream,lifecycle}.rs` |
-| 스타일 | `css!` **컴파일타임 검증** + 등록/조회/해석(`register` / `lookup_class` / `lookup_tag` / `resolve`) + **egui 실제 적용**(6태그·9속성, 팔레트 8토큰) | `src/style.rs`, `css.rs`, `tests/{css,style}.rs`, egui `adapter.rs` |
+| 스타일 | `css!` **컴파일타임 검증** + 등록/조회/해석(`register` / `lookup_class` / `lookup_tag` / `resolve`) + **egui 실제 적용**() + **egui 실제 적용**(6태그·9속성, 팔레트 8토큰) | `src/style.rs`, `css.rs`, `tests/{css,style}.rs`, egui `adapter.rs` |
 | 테스트 | `flush` / `advance` / `pump` / `press_key` / `press_enter` / `type_` / `click` / `expect_text` / `text` / `render_tree`, `set_mock1..3` | `src/testing.rs` |
 | 플랫폼 | `run(Headless, C) -> TestApp`, egui 어댑터 crate(`render(ui, &tree, &mut arena) -> Pass`, 17태그, `<Raw>` 실제 호출) | `src/platform.rs`, `crates/elm-magic-egui/{src,tests}/` |
 
@@ -170,63 +170,74 @@ let json = serde_json::to_string(app.element())?;   // 핸들러는 빠진다
 
 ---
 
-## 2.9 v0.6 — 스타일 렌더링 ✅ (Stage 0 + Stage 1) · 미배포
+## 2.9 v0.6 — full CSS behaviour ✅ (0.6.0)
 
-> 출발점: `egui_css`(SergioRibera)를 참고한 논의. 그쪽은 **런타임 문자열 파싱 + 전역 싱글턴 +
-> 위젯별 `.styled()` 옵트인**이고, README가 *"Layout system — a DOM is required"* 라며 레이아웃/상속을
-> 포기했다(`:hover`도 실패). 우리는 `Element` 트리와 `Arena`가 이미 있어 그 지점을 넘을 수 있다.
+> Starting point: a discussion referencing `egui_css` (SergioRibera). That crate does
+> **runtime string parsing + a global singleton + per-widget `.styled()` opt-in**, and its
+> README gives up on layout/inheritance (*"Layout system — a DOM is required"*), with
+> `:hover` failing too. We already have an `Element` tree and an `Arena`, so we can go past
+> that point.
 
-### 진단 (수정 전 실측)
+### Diagnosis (measured before the fix)
 
-| # | 사실 | 근거 |
+| # | Fact | Evidence |
 |---|---|---|
-| 1 | **등록만 하고 아무도 안 그린다** — egui 어댑터에 `class`/`style` 참조 **0건** | egui `src/lib.rs`(수정 전 169줄 전체) |
-| 2 | 값이 타입 없는 문자열이고, 사양서 토큰(`surface`/`primary`/`text_dim`)을 정의한 타입이 없다 | 수정 전 `style.rs:12-15` |
-| 3 | 사양서 6.1의 `StyleId(u32)` 인터닝 + "렌더 시 정수 비교" 미구현 (문자열 + 선형 탐색) | `spec.md:237-239` |
-| 4 | **클래스 규약이 두 개** — `css!`는 `.card`, `Element::class`/테스트 셀렉터는 `"card"` | `css.rs:22` vs `element.rs:134` |
-| 5 | **`class="card muted"`가 매칭 불가** — `vec![Into::into("card muted")]` 하나로 들어감 | 수정 전 `jsx.rs:1832,1841` |
-| 6 | 사양서 6.2의 `class={if …}`가 **컴파일 실패** (`Vec<String>: From<&str>` 없음) | 무테스트 영역 |
-| 7 | 잘못된 선언(`:` 없음)·모르는 속성이 **조용히 버려짐** | 수정 전 `css.rs::flush_prop` |
+| 1 | **Registered but never painted** — zero `class`/`style` references in the egui adapter | egui `src/lib.rs` (169 lines before) |
+| 2 | Values were untyped strings; no type defined the spec tokens (`surface`/`primary`/`text_dim`) | `style.rs:12-15` before |
+| 3 | Spec 6.1 `StyleId(u32)` interning + "integer comparison at render" unimplemented (string keys, linear scan) | `spec.md:237-239` |
+| 4 | **Two class conventions** — `css!` used `.card`, `Element::class`/tests used `"card"` | `css.rs:22` vs `element.rs:134` |
+| 5 | **`class="card muted"` could not match** — a single `vec![Into::into("card muted")]` | `jsx.rs:1832,1841` before |
+| 6 | Spec 6.2 `class={if …}` **failed to compile** (no `Vec<String>: From<&str>`) | untested area |
+| 7 | Invalid declarations (missing `:`) and unknown properties were **silently dropped** | `css.rs::flush_prop` before |
 
-### 구현
+### Implementation
 
-| 층 | 내용 |
+| Layer | Contents |
 |---|---|
-| 매크로 `css.rs` | 속성 9개·토큰 8개 표로 **컴파일타임 검증**. 하이픈 재조립(`font - size` → `font-size`), 1·2·4값 숏핸드, 음수(`0 -8`) |
-| 코어 `style.rs` | `StyleSpec`(선언) → `apply(spec, palette)` → `ResolvedStyle`(확정). `Palette` / `Token` / `Color` / `Edges`. `lookup_class` / `lookup_tag`(키 공간 분리) / `resolve`. `IntoClasses` |
-| 코어 `element.rs` | `Element::tag()` (18 variant, `Fragment`는 `""`), `Element::resolved_style(&Palette)` |
-| 어댑터 (egui) | `ResolvedStyle` → `Frame` / `RichText` / `Button` / `item_spacing`. `render_with_palette`, `Pass::styles` |
+| Macro `css.rs` | Compile-time tables: **36 properties, 14 tokens**. The selector is collected token-by-token up to the `{` group, and a single string literal is taken **verbatim** (real CSS, whitespace preserved). Hyphen rejoining (`font - size` → `font-size`), 1/2/4-value shorthand, negatives (`0 -8`), `shadow` with 1–4 values |
+| Core `style.rs` | `StyleSpec` → `apply` → `ResolvedStyle`. `Selector` / `Part` / `Node` / `State` / `StateMask` / `Comb` with CSS specificity and descendant/child matching. `Palette`(14) / `Token` / `Color` / `Edges` / `Len` / `Align` / `Transform` / `Cursor` / `Shadow`. `lookup` / `lookup_class` / `lookup_tag` / `resolve` / `resolve_nodes` / `selectors`. `IntoClasses` (`Option<T>`, `&T`) |
+| Core `element.rs` | `Element::tag()` (18 variants, `Fragment` → `""`), `resolved_style()`, `node()`, `resolved_style_in(ancestors, state, inherited, palette)` |
+| Adapter (egui) | Walks the tree carrying ancestor path + inherited style + node state, then maps `ResolvedStyle` → `Frame` / `RichText` / `Label` / `Button` / `Checkbox` / `Spinner` / `ProgressBar` / `Window` / layout / cursor / opacity. `render_with_palette`, `Pass::styles` |
 
-### 캐스케이드 규칙
+### Cascade & behaviour rules
 
-태그 셀렉터 → 클래스 (나열 순서). **뒤가 이김**, 덮지 않은 속성은 남는다. CSS 상속·스펙티시티는 없다.
+`specificity → declaration order` (like CSS). Specificity is `(classes + states, tags)` and
+`*` counts as zero, so the order of names inside `class="b a"` is irrelevant.
+Inherited: `color` `font-size` `weight` `font-style` `font-family` `line-height`
+`letter-spacing` `text-decoration` `text-align` `text-transform`. Nothing else inherits.
+States: `:hover` `:active` `:focus` `:disabled` — the adapter stores each node's rect and
+focus in egui memory and resolves them on the next frame (the same trick egui itself uses
+for interaction, so there is no visible lag).
 
-### 검증 (30개 신규)
+### Verification
 
-| 파일 | 개수 | 내용 |
+| File | Count | Contents |
 |---|---|---|
-| `tests/style.rs` | 신규 16 | 해석 계약 전부 (egui 불필요 — 의존성 0 정책 유지) |
-| `tests/css.rs` | 3 → 12 | 규약 통일·다중 클래스·조건부 클래스·**토큰 어휘 대조** |
-| egui `tests/adapter.rs` | 3 → 8 | `Pass::styles` + **페인트 명령의 사각형 채움색**으로 실제 적용 확인 |
+| `tests/style.rs` | new, 25 | selector parsing, specificity, descendant/child, states, inheritance, all 36 properties, token vocabulary (no egui needed — the zero-dependency policy holds) |
+| `tests/css.rs` | 3 → 13 | registration rules, multi/conditional classes, five selector forms, token vocabulary cross-check |
+| egui `tests/adapter.rs` | 3 → 7 | `Pass::styles`, `display:none`, theme palette |
 
 ```
-cargo test                            # 126  (v0.5: 96)
-cargo test --workspace --all-features # 130  (v0.5: 100)
+cargo test                            # 135  (v0.5: 96)
+cargo test --workspace --all-features # 139  (v0.5: 100)
 ```
 
-### 남은 한계 (v0.6)
+Adapter tests deliberately inspect **only our own types** (`Pass::styles`) instead of egui
+paint commands, so a platform version bump does not break them.
 
-스타일 태그 6개(`Col` `Row` `Text` `Strong` `Button` `Banner`) / 속성 9개.
-`:hover`·`:focus`·`:disabled`, 자식·후손 셀렉터, 상속, `border`·`shadow`·`cursor`·`line-height`는 미구현.
-토큰 목록이 매크로(`css.rs::TOKENS`)와 코어(`Token::ALL`)에 중복 —
-`tests/css.rs::css_token_vocabulary_matches_core`가 어긋남을 잡는다.
-`css!`는 `.init_array` ctor라 wasm 이식은 별도 과제다.
-사양서 6.1의 `StyleId(u32)` 인터닝·정수 비교도 미구현(문자열 키 + 선형 탐색).
+### Remaining limits (v0.6)
 
-**ctor 실측(라이브러리 시나리오)**: `css!`를 라이브러리 `src/`에서 써도, 최종 바이너리가
-그 크레이트 심볼을 하나라도 참조하면(다른 모듈·다른 CGU여도) 등록이 실행된다.
-아무것도 참조하지 않으면 rlib 객체가 링크되지 않아 등록도 없다 — 안 쓰는 라이브러리는
-스타일도 기여하지 않으므로 의도된 결과다.
+`class` on `Input` / `TextArea` / `Raw` is ignored; no inline `style="..."`, no `transition`,
+no `:not()` / `:nth-child()`; the token list is duplicated between the macro (`css.rs::TOKENS`)
+and the core (`Token::ALL`) — `tests/css.rs::css_token_vocabulary_matches_core` catches drift.
+`css!` registers via an `.init_array` constructor, so wasm needs another mechanism, and spec
+6.1's `StyleId(u32)` interning / integer comparison is still unimplemented (string keys +
+linear scan).
+
+**ctor measurement (library scenario)**: using `css!` inside a library's `src/` still registers
+as long as the final binary references at least one symbol from that crate (even from another
+module or CGU). With no references the rlib object is never linked, so nothing registers — an
+unused library contributes no styles, which is the intended outcome.
 
 ---
 
@@ -472,11 +483,12 @@ rustc --edition 2021 --test --emit=metadata \
 | `s39_router_match.rs` | `{match route { … => ui! { <Home /> } }}` | ✅ |
 | `w5.rs` | `<Button disabled={n > 0} on_click={n = 0}>` | ✅ |
 
-### 6.4 기존 테스트 현황 (워크스페이스 90개 통과)
+### 6.4 기존 테스트 현황 (워크스페이스 135개 통과)
 
 ```
 tests/counter.rs   tests/todo.rs    tests/effects.rs   tests/lifecycle.rs
 tests/css.rs       tests/mock.rs    tests/stream.rs    tests/raw.rs
+tests/style.rs     tests/snapshot.rs
 tests/platform.rs  tests/syntax.rs  tests/timers.rs    tests/widgets.rs
 tests/sugar.rs     tests/store.rs   tests/subs.rs      tests/callbacks.rs
                    tests/integration.rs

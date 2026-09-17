@@ -180,12 +180,36 @@ impl Element {
         }
     }
 
-    /// 이 엘리먼트에 적용될 **최종 스타일** (사양서 6.1·6.2).
+    /// 이 엘리먼트에 적용될 **최종 스타일** (사양서 6.1~6.3).
     ///
-    /// 태그 셀렉터를 먼저 적용하고, `class`를 나열 순서대로 덮어쓴다
-    /// (뒤가 이김). 색은 팔레트로 확정된 값이라 어댑터가 팔레트를 몰라도 된다.
+    /// 조상이 없으므로 **후손/자식 셀렉터는 맞지 않는다** — 트리 전체 해석은
+    /// `resolved_style_in`을 쓴다.
     pub fn resolved_style(&self, palette: &crate::style::Palette) -> crate::style::ResolvedStyle {
         crate::style::resolve(self.class(), self.tag(), palette)
+    }
+
+    /// 셀렉터 매칭에 쓰는 노드 정보 (태그 + 클래스).
+    pub fn node(&self) -> crate::style::Node<'_> {
+        crate::style::Node::new(self.tag(), self.class())
+    }
+
+    /// **트리 안에서**의 최종 스타일 — 후손/자식 셀렉터·상태·상속까지.
+    ///
+    /// `ancestors`는 **가까운 조상부터**다 (부모, 조부모, …).
+    /// `inherited`는 부모의 확정 스타일(상속 속성만 물려받는다).
+    pub fn resolved_style_in(
+        &self,
+        ancestors: &[&Element],
+        state: crate::style::State,
+        inherited: Option<&crate::style::ResolvedStyle>,
+        palette: &crate::style::Palette,
+    ) -> crate::style::ResolvedStyle {
+        let mut path: Vec<crate::style::Node> = Vec::with_capacity(ancestors.len() + 1);
+        path.push(self.node());
+        for ancestor in ancestors {
+            path.push(ancestor.node());
+        }
+        crate::style::resolve_nodes(&path, state, inherited, palette)
     }
 
     /// 요소 서브트리의 텍스트 노드들 (헤드리스 테스트의 `text()`/`assert_*` 기반).

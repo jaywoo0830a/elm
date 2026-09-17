@@ -1,48 +1,38 @@
-# 릴리스 절차 (Releasing)
+# Releasing
 
-crates.io에 **`elm-magic` / `elm-magic-macros` / `elm-magic-egui`** 세 크레이트를
-**순서대로** 배포한다. 버전은 항상 셋이 함께 올라간다. (배포판: 0.1.0 → 다음: 0.5.0)
+Publishes three crates to crates.io — **`elm-magic` / `elm-magic-macros` / `elm-magic-egui`** —
+and always keeps their versions in lockstep. (Published: 0.1.0, 0.5.0 → next: **0.6.0**)
 
-> ⚠️ **버전 결정 필요** — 매니페스트는 아직 `0.5.0`인데 트리에는 **v0.6 스타일 작업**이 들어 있다
-> (`CHANGELOG.md`의 `[Unreleased] — v0.6 스타일`, `README.md`의 `v0.6` 절).
-> 둘 중 하나를 고른다:
->
-> 1. **0.5.0을 먼저 배포** — 스타일 작업 이전 커밋에서: `git tag v0.5.0 d063fb2` (그 커밋의 매니페스트가 0.5.0이다).
-> 2. **0.6.0으로 올려서 배포** — 1번 절의 5곳을 `0.6.0`으로 바꾸고 `CHANGELOG`의 `[Unreleased]`를 `[0.6.0]`으로 옮긴다.
->
-> 어느 쪽이든 **매니페스트 버전 = 배포 버전**이 되게 맞춘 뒤 진행한다.
-
-## 0. 준비
+## 0. Prepare
 
 ```sh
-cargo login            # crates.io API 토큰 (또는 CARGO_REGISTRY_TOKEN 환경변수)
-cargo search elm-magic # 현재 배포된 버전 확인
+cargo login            # crates.io API token (or CARGO_REGISTRY_TOKEN)
+cargo search elm-magic # check the currently published version
 ```
 
-## 1. 버전 올리기 — 5곳을 모두 맞춘다
+## 1. Bump the version — keep these 5 places in sync
 
-| 파일 | 항목 |
+| File | Field |
 |---|---|
 | `Cargo.toml` | `[package] version` |
-| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.5.0" }` |
+| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.6.0" }` |
 | `crates/elm-magic-macros/Cargo.toml` | `[package] version` |
 | `crates/elm-magic-egui/Cargo.toml` | `[package] version` |
-| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.5.0" }` |
+| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.6.0" }` |
 
-`Cargo.lock`은 `cargo build`가 자동 갱신한다.
-`README.md` 설치 스니펫(`elm-magic = "0.5"`)과 `CHANGELOG.md`도 함께 갱신한다.
+`Cargo.lock` updates itself on the next `cargo build`.
+Also refresh `README.md`'s install snippet (`elm-magic = "0.6"`) and `CHANGELOG.md`.
 
-## 2. 로컬 검증 (배포 전 필수 — 되돌릴 수 없다)
+## 2. Local verification (mandatory before publishing — it cannot be undone)
 
 ```sh
-# 테스트: 기본(의존성 0) + 전체 기능
-cargo test --workspace                  # 127
-cargo test --workspace --all-features   # 131
+cargo test --workspace                  # 135
+cargo test --workspace --all-features   # 139
 
-# 패키지 검증
 cargo package --allow-dirty -p elm-magic-macros
 
-# 아직 배포되지 않은 0.5.0 의존성은 로컬 patch로 대체해 **미리** 검증한다.
+# The not-yet-published 0.6.0 dependencies are substituted with local patches so that
+# packaging can be verified *ahead of time*.
 cargo package --allow-dirty -p elm-magic \
   --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
 
@@ -51,65 +41,77 @@ cargo package --allow-dirty -p elm-magic-egui \
   --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
 ```
 
-- `--config patch…`는 **검증 전용**이다. 실제 `Cargo.toml`에 patch를 남기지 않는다.
-- 이걸 빼고 `-p elm-magic`을 돌리면 아직 0.5.0이 없어서
-  `failed to select a version for the requirement elm-magic-macros = "^0.5.0"`이 난다 — **정상**이다.
+- The `--config patch…` flags are **verification only** — never leave patches in `Cargo.toml`.
+- Without them `-p elm-magic` fails with
+  `failed to select a version for the requirement elm-magic-macros = "^0.6.0"` because 0.6.0
+  is not on crates.io yet. That is expected.
+- `--allow-dirty` is fine here: the working tree holds the version bump plus generated files
+  (and `README.md` is a work in progress).
 
-## 3. 커밋 & 태그
+## 3. Commit & tag
 
 ```sh
 git add -A
-git commit -m "chore: release v0.5.0"
-git tag v0.5.0
+git commit -m "chore: release v0.6.0"
+git tag v0.6.0
 git push origin HEAD --tags
 ```
 
-## 4. 배포 — 순서가 중요하다
+## 4. Publish — order matters
 
-의존 방향: `elm-magic-macros` → `elm-magic` → `elm-magic-egui`
+Dependency direction: `elm-magic-macros` → `elm-magic` → `elm-magic-egui`
 
 ```sh
 cargo publish -p elm-magic-macros
 
-# 인덱스 전파 대기(보통 1~3분). 확인:
+# wait for index propagation (usually 1-3 minutes). check:
 cargo search elm-magic-macros
 
 cargo publish -p elm-magic
 cargo publish -p elm-magic-egui
 ```
 
-- `elm-magic`은 `elm-magic-macros = "0.5.0"`을 요구한다. 매크로가 먼저 올라가야 한다.
-- 위 2번의 patch 검증은 **로컬 전용**이라, 실제 배포는 이 순서를 지켜야 통과한다.
-- `cargo publish --dry-run`은 레지스트리 조회가 필요하다. 오프라인이면
-  `attempting to make an HTTP request, but --offline was specified`로 실패하니 온라인에서 실행한다.
+- `elm-magic` requires `elm-magic-macros = "0.6.0"`, so the macro crate must go first.
+- The patch verification in step 2 is local-only; the real publish must use this order.
+- `cargo publish --dry-run` needs registry access. Offline it fails with
+  `attempting to make an HTTP request, but --offline was specified` — run it online.
+- `cargo publish` runs the same packaging checks as `cargo package`, so step 2 is the gate.
 
-## 5. 배포 후 확인
+## 5. After publishing
 
 ```sh
 cargo search elm-magic
-cargo add elm-magic@0.5.0 elm-magic-egui@0.5.0   # 새 임시 프로젝트에서
+cargo add elm-magic@0.6.0 elm-magic-egui@0.6.0   # in a scratch project
 cargo test
 ```
 
-- docs.rs: <https://docs.rs/elm-magic/0.5.0> — `all-features`로 빌드되어 `serde` 기능도 보인다
-  (`[package.metadata.docs.rs] all-features = true`).
-- 문제가 생겨도 **삭제는 불가**하다. 72시간 내 `cargo yank --version 0.5.0 -p <crate>`로
-  양키(새 프로젝트의 의존 해석에서 제외)만 가능하니, 2번 검증을 반드시 통과시키고 올린다.
+- docs.rs: <https://docs.rs/elm-magic/0.6.0> — built with `all-features`, so the `serde`
+  feature is documented (`[package.metadata.docs.rs] all-features = true`).
+- Mistakes cannot be deleted. Within 72 hours you can only
+  `cargo yank --version 0.6.0 -p <crate>` (excludes it from new dependency resolution),
+  so make step 2 pass before publishing.
 
-## 체크리스트
+## Checklist
 
-- [ ] 3개 `Cargo.toml` 버전 + 2개 path 의존성 제약을 모두 올렸다
-- [ ] `Cargo.lock`이 0.5.0으로 갱신됐다 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
-- [ ] README 설치 스니펫 · CHANGELOG 갱신
-- [ ] `cargo test --workspace` / `--all-features` 통과
-- [ ] `cargo package` 3개 통과 (patch 사전 검증 포함)
-- [ ] 커밋 + `git tag v0.5.0` + push
-- [ ] `elm-magic-macros` → (전파 대기) → `elm-magic` → `elm-magic-egui`
-- [ ] `cargo add` 스모크 테스트, docs.rs 확인
+- [ ] 3 × `Cargo.toml` versions + 2 × path dependency requirements bumped
+- [ ] `Cargo.lock` shows 0.6.0 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
+- [ ] README install snippet · CHANGELOG updated
+- [ ] `cargo test --workspace` / `--all-features` pass (135 / 139)
+- [ ] `cargo package` passes for all 3 (including the patch verification)
+- [ ] commit + `git tag v0.6.0` + push
+- [ ] `elm-magic-macros` → (wait for propagation) → `elm-magic` → `elm-magic-egui`
+- [ ] `cargo add` smoke test, docs.rs check
 
-## 선택 사항
+## Optional
 
-- `rust-version`(MSRV)을 명시하면 구 툴체인에서 친절한 에러가 난다.
-  최고 요구 API가 `Waker::noop()`(Rust 1.85)이라 `rust-version = "1.85"`가 유효하다.
-- CI(`.github/workflows/ci.yml`)에서 `cargo test --workspace --all-features` +
-  `cargo package` 3종을 돌리면 이 문서의 2번을 자동화할 수 있다.
+- Declaring `rust-version` (MSRV) produces friendlier errors on old toolchains.
+  The newest API we need is `Waker::noop()` (Rust 1.85), so `rust-version = "1.85"` is valid.
+- CI (`.github/workflows/ci.yml`) running `cargo test --workspace --all-features` plus the
+  three `cargo package` invocations automates step 2.
+
+## Version history note
+
+The tree carried the v0.6 style work while the manifests still said `0.5.0`
+(see `CHANGELOG.md`). That decision is now settled: **the style milestone ships as 0.6.0**,
+so the manifests are at `0.6.0` and `[Unreleased]` was folded into `[0.6.0]`.
+`git tag v0.5.0` still points at the earlier commit (`d063fb2`) whose manifests were `0.5.0`.
