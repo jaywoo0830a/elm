@@ -12,6 +12,7 @@ UI 라이브러리. **런타임 의존성은 0**이다 — `cargo tree -p elm-ma
 [dependencies]
 elm-magic = "0.6"
 elm-magic-egui = "0.6"   # egui 어댑터 (선택)
+elm-magic-gpui = "0.6"   # gpui-kit 어댑터 (선택)
 ```
 
 ## 빠른 시작
@@ -60,6 +61,24 @@ fn counter_ui(ui: &mut egui::Ui, ctx: &mut Ctx) {
     elm_magic_egui::render(ui, &tree, &mut ctx.arena);
 }
 ```
+
+## gpui-kit에 그리기
+
+```rust
+use elm_magic::prelude::*;
+use elm_magic_gpui::ElmView;
+
+struct Hello;
+impl Render for Hello {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().child(cx.new(|cx| ElmView::<Counter>::new(cx)))
+    }
+}
+```
+
+`css!`의 팔레트는 활성 gpui-kit 테마(`ActiveTheme`)에서 온다 — `bg: surface`는
+`theme.popover`, `color: text_dim`은 `theme.muted_foreground`로 매핑되므로 라이트/다크/
+커스텀 테마를 바꾸면 `css!` 색도 따라온다. `<Raw>`는 `&mut gpui_kit::Window`를 받는다.
 
 ## 기능 요약
 
