@@ -198,13 +198,26 @@ fn unquote(piece: &str) -> Option<String> {
 /// **식별자(또는 `*`) 사이만** 공백을 넣는다 —
 /// `.card Button`은 후손(공백), `.card>Button`은 자식, `.card.muted`는 복합.
 ///
+/// 하이픈 조각(`-`)은 단어가 아니라 **앞 식별자에 이어 붙는 접합자**다 —
+/// `.tabs__item--active`가 `.tabs__item - - active`로, `.my-class`가
+/// `.my - class`로 조인되면 코어 파싱이 실패해 **조용히 미등록**된다 (0.6.1에서 수정).
+///
 /// Rust 토큰은 공백을 보존하지 않으므로 **클래스 사이 후손**(`.a .b`)은
 /// 구분할 수 없다 — 그런 셀렉터는 문자열로 쓴다: `".a .b" { … }`.
 fn join_selector(pieces: &[String]) -> String {
-    let word = |s: &str| s == "*" || (!s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'));
+    let word = |s: &str| {
+        s == "*" || (!s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'))
+    };
+    let hyphen = |s: &str| !s.is_empty() && s.chars().all(|c| c == '-');
     let mut out = String::new();
     let mut prev_word = false;
     for piece in pieces {
+        // `-`는 앞 식별자에 그대로 붙이고, 뒤 식별자도 공백 없이 따라오게 한다
+        if hyphen(piece) && prev_word {
+            out.push_str(piece);
+            prev_word = false;
+            continue;
+        }
         let is_word = word(piece);
         if is_word && prev_word {
             out.push(' ');
@@ -217,8 +230,8 @@ fn join_selector(pieces: &[String]) -> String {
 
 /// 렉터 문법을 검증한다 (core `Selector::parse`와 같은 규칙).
 ///
-/// 여기서 잡지 못한 오류는 등록 시 조용히 건너뛰어지므로, 흔한 실수는
-/// **파일 에러**로 만든다.
+/// 코어가 거부하는 셀렉터는 등록되지 않으므로(0.6.0까지는 조용히, 0.6.1부터는
+/// panic), 흔한 실수는 여기서 **컴파일 에러**로 만든다.
 fn validate_selector(selector: &str) {
     if selector.trim().is_empty() {
         panic!("elm-magic css!: 렉터가 비었습니다");
@@ -247,7 +260,105 @@ fn validate_selector(selector: &str) {
             }
             rest = &rest[name.len()..];
         }
+        // 코어가 파싱하지 못하는 셀렉터는 등록 루틴이 조용히 버린다 —
+        // "스타일이 안 먹는다"로만 보이므로 컴파일 에러로 승격한다 (0.6.1).
+        if !selector_is_valid(one) {
+            panic!(
+                "elm-magic css!: `{one}`의 셀렉터 문법이 잘못됐습니다. \
+                 마디는 `태그` / `*` / `.클래스` / `:상태`의 조합이고, \
+                 클래스 이름은 `.` 뒤에 와야 합니다 (예: `.tabs__item--active`)"
+            );
+        }
     }
+}
+
+/// 셀렉터 하나(결합자 포함)를 코어 `Selector::parse`와 **같은 방식**으로
+/// 쪼개 마디마다 검사한다.
+///
+/// 매크로는 코어에 의존할 수 없어(순환 의존) 규칙을 옮겨 적었다.
+fn selector_is_valid(one: &str) -> bool {
+    let mut rest = one.trim();
+    if rest.is_empty() {
+        return false;
+    }
+    let mut count = 0usize;
+    while !rest.is_empty() {
+        if let Some(r) = rest.strip_prefix('>') {
+            if count == 0 {
+                return false; // `>`로 시작할 수 없다
+            }
+            rest = r.trim_start();
+            if rest.is_empty() {
+                return false;
+            }
+        }
+        let end = rest
+            .find(|c: char| c == '>' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        if !compound_is_valid(&rest[..end]) {
+            return false;
+        }
+        count += 1;
+        rest = rest[end..].trim_start();
+    }
+    count > 0
+}
+
+/// 마디 하나(`.card`, `Button:hover`, `*`)를 코어 `parse_compound`와 같은
+/// 규칙으로 검사한다.
+fn compound_is_valid(text: &str) -> bool {
+    let cs: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut seen = false;
+    let mut tag_seen = false;
+    while i < cs.len() {
+        match cs[i] {
+            '.' => {
+                i += 1;
+                if ident(&cs, &mut i).is_empty() {
+                    return false; // `.` 뒤에 이름이 없다
+                }
+                seen = true;
+            }
+            ':' => {
+                i += 1;
+                if !matches!(
+                    ident(&cs, &mut i).as_str(),
+                    "hover" | "active" | "focus" | "focused" | "disabled"
+                ) {
+                    return false;
+                }
+                seen = true;
+            }
+            '*' => {
+                if seen {
+                    return false; // `*`는 마디에 혼자만 온다
+                }
+                i += 1;
+                tag_seen = true;
+                seen = true;
+            }
+            c if c.is_alphanumeric() || c == '_' => {
+                if tag_seen {
+                    return false; // 태그는 마디에 하나만
+                }
+                ident(&cs, &mut i);
+                tag_seen = true;
+                seen = true;
+            }
+            _ => return false,
+        }
+    }
+    seen
+}
+
+/// 식별자 하나를 읽는다 (코어 `style::ident`와 같다 — `-` 포함).
+fn ident(cs: &[char], i: &mut usize) -> String {
+    let start = *i;
+    while *i < cs.len() && (cs[*i].is_alphanumeric() || cs[*i] == '_' || cs[*i] == '-') {
+        *i += 1;
+    }
+    cs[start..*i].iter().collect()
 }
 
 /// 한 규칙의 `key: value;` 들을 `StyleSpec` 필드 초기화 목록으로 바다.

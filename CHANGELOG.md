@@ -3,6 +3,35 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.6.1] — 2026-09-18
+
+`css!`가 하이픈이 들어간 클래스 셀렉터를 조용히 버리던 버그 픽스.
+BEM(`.tabs__item--active`)이 등록되지 않던 문제 (FreeDF 리포트).
+
+### Fixed — `css!` 하이픈 셀렉터가 조용히 미등록 (버그 리포트 4번째)
+
+- **증상**: `.tabs__item--active` / `.my-class`가 `lookup` / `resolve`에서
+  `None` — 컴파일 에러도 경고도 없이 "스타일이 안 먹는다"로만 보였다
+- **원인**: 매크로 `join_selector()`가 `-` 하나도 단어로 봐서
+  `.tabs__item--active`를 `.tabs__item - - active`로 조인했고, 코어
+  `Selector::parse`가 이를 거부한 뒤 등록 루틴이 **조용히 건너뛰었다**
+- **수정** (`crates/elm-magic-macros/src/css.rs`):
+  - `join_selector()`가 `-` 조각을 앞 식별자에 이어 붙인다 →
+    `.tabs__item--active`, `.my-class`가 그대로 등록된다
+  - `validate_selector()`가 코어와 **같은 문법**으로 마디(`compound`)를
+    컴파일타임에 검사한다 — `.a..b` / `#id` 같은 잘못된 셀렉터는 이제
+    `proc macro panicked` 대신 명확한 **컴파일 에러**다
+- **수정** (`src/style.rs`): `style::register`가 파싱 실패를 조용히 건너뛰지
+  않고 `panic`한다 (직접 호출하는 경우의 마지막 안전망)
+- **회귀 테스트**: `tests/bug_report.rs` 버그 4 (3개) — 리포트의 최소 재현
+  (`.tabs__item`은 등록, `.tabs__item--active`는 미등록) + `resolve` 매칭 +
+  하이픈 클래스 일반형
+
+### Tests
+
+- `cargo test --workspace` = **138** (0.6.0: 135), `--all-features` = **142** (139)
+- `tests/bug_report.rs` 6 → 9
+
 ## [0.6.0] — 2026-09-17
 
 `css!` no longer merely registers rules — styles actually resolve and render.
@@ -133,4 +162,5 @@ Selector matching, cascade, inheritance, and **36 properties across 14 tags**.
 - `Desktop` / `Web` / `Terminal` 플랫폼 — 미구현 (현재 `Headless` + egui 어댑터)
 - 상세: `prototype/prototypes/implementation-status.md`
 
+[0.6.1]: https://github.com/jaywoo0830a/elm/releases/tag/v0.6.1
 [0.5.0]: https://github.com/jaywoo0830a/elm/releases/tag/v0.5.0

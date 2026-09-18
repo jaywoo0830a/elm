@@ -1189,6 +1189,11 @@ fn registry() -> &'static Mutex<Registry> {
 /// `css!`가 부르는 등록. 같은 렉터는 ** 등록이 이긴다**.
 ///
 /// 셀렉터 목록(`.a, .b`)은 여기서 나눠 따로 등록한다.
+///
+/// 파싱할 수 없는 셀렉터는 **panic**한다 — 0.6.0까지는 조용히 건너뛰어
+/// "스타일이 안 먹는다"로만 보였다 (0.6.1). `css!`는 같은 문법을 컴파일타임에
+/// 검사하므로(`macros::css::validate_selector`) 여기서 걸리는 것은
+/// `register`를 직접 부른 경우뿐이다.
 pub fn register(entries: Vec<(&str, StyleSpec)>) {
     let mut reg = registry().lock().unwrap();
     for (text, spec) in entries {
@@ -1198,7 +1203,11 @@ pub fn register(entries: Vec<(&str, StyleSpec)>) {
                 continue;
             }
             let Some(selector) = Selector::parse(one) else {
-                continue;
+                panic!(
+                    "elm-magic: 셀렉터 `{one}`를 파싱할 수 없습니다. \
+                     마디는 `태그` / `*` / `.클래스` / `:상태`의 조합이고, \
+                     클래스 이름은 `.` 뒤에 와야 합니다"
+                );
             };
             let order = reg.rules.len();
             reg.rules.push(Rule {

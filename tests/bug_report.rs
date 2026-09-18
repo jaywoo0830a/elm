@@ -1,12 +1,15 @@
-//! `elm-magic-bug-report.md`의 3건에 대한 회귀 테스트 (테스트 우선 수정).
+//! 버그 리포트(FreeDF 채택 과정) 항목의 회귀 테스트 (테스트 우선 수정).
+//!
+//! 리포트 항목이 수정되면 리포트 파일은 지우고 **여기 테스트만 남긴다** —
+//! 각 테스트는 리포트의 재현 코드를 실제 라이브러리에서 다시 실행한다.
 //!
 //! 1) `view!`의 `pub fn` / `pub(crate) fn`이 `pub #[derive(..)]`를 생성해
 //!    컴파일이 깨지던 문제 (+ `pub(crate)` 의미 보존)
 //! 2) `remove(x)` 특수 폼 **뒤에** 오는 문장 구분자가 `,`로 생성되던 문제
 //! 3) `{if ..}` 식 내부의 지역 컬렉션 `.iter().map(..)`이 소유 반복으로
 //!    재작성되지 않아 E0716(temporary dropped while borrowed)이 나던 문제
-//!
-//! 각 테스트는 리포트의 재현 코드를 실제 라이브러리에서 다시 실행한다.
+//! 4) (0.6.0) BEM 수정자(`.tabs__item--active`)가 `-` 단위로 쪼개져
+//!    `.tabs__item - - active`로 조인 → 파싱 실패 → **조용히 미등록**되던 문제
 
 // ── 버그 1: `pub fn` / `pub(crate) fn` ──────────────────────
 
@@ -171,4 +174,71 @@ fn local_collection_can_be_iterated_more_than_once() {
     app.assert_text("sum: 6");
     // total은 이제 sum(6)으로 바뀌지만 화면에는 영향이 없다 — 컴파일·실행 확인용
     app.assert_text("v1");
+}
+
+// ── 버그 4 (0.6.0): BEM 수정자(`--`) 클래스가 조용히 미등록 ──────
+
+// 리포트의 최소 재현. `.tabs__item`(요소)은 등록됐지만
+// `.tabs__item--active`(수정자)는 `lookup_class`가 `None`을 돌려줬다.
+elm_magic::css! {
+    .tabs__item { color: text_dim; }
+    .tabs__item--active { color: text; }
+    .panel__item { gap: 4; }
+    .modal__actions--end { justify: end; }
+}
+
+#[test]
+fn bem_modifier_class_is_registered() {
+    let modifier = elm_magic::style::lookup_class("tabs__item--active")
+        .expect("`.tabs__item--active`가 등록돼야 한다 (BEM 수정자)");
+    assert_eq!(modifier.get("color").as_deref(), Some("text"));
+    assert_eq!(
+        modifier.selector(),
+        ".tabs__item--active",
+        "`-`가 별도 단어로 쪼개져 조인되면 안 된다"
+    );
+
+    // 대조군: 요소(`__`)는 예전에도 정상 등록됐다
+    assert!(elm_magic::style::lookup_class("tabs__item").is_some());
+    assert!(elm_magic::style::lookup_class("panel__item").is_some());
+    assert!(elm_magic::style::lookup_class("modal__actions--end").is_some());
+}
+
+#[test]
+fn bem_modifier_class_resolves_and_matches() {
+    use elm_magic::style::{resolve, Palette, Token};
+    let palette = Palette::dark();
+    // 클래스 이름에 `--`가 들어가도 그대로 매칭돼야 한다
+    let styled = resolve(&["tabs__item--active".to_string()], "Text", &palette);
+    assert_eq!(
+        styled.color,
+        Some(palette.get(Token::Text)),
+        "수정자 규칙이 적용된다"
+    );
+    let plain = resolve(&["tabs__item".to_string()], "Text", &palette);
+    assert_eq!(
+        plain.color,
+        Some(palette.get(Token::TextDim)),
+        "요소 규칙은 그대로"
+    );
+}
+
+// 같은 원인의 일반형: 하이픈이 들어간 클래스 이름(`.my-class`)도
+// `join_selector`가 `-`를 단어로 보면 `.my - class`가 돼 미등록된다.
+elm_magic::css! {
+    .my-class { gap: 2; }
+    .panel__item--active { gap: 3; }
+}
+
+#[test]
+fn hyphenated_class_name_is_registered() {
+    assert!(
+        elm_magic::style::lookup_class("my-class").is_some(),
+        "`.my-class`가 등록돼야 한다"
+    );
+    assert!(elm_magic::style::lookup_class("panel__item--active").is_some());
+    assert_eq!(
+        elm_magic::style::lookup_class("my-class").unwrap().selector(),
+        ".my-class"
+    );
 }

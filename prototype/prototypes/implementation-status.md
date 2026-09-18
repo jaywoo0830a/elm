@@ -2,7 +2,7 @@
 
 > 기준: `spec.md`(사양서) + `1.rs` / `2.rs` / `3.rs`(각 20 패턴)
 > 대상 구현: `src/`, `crates/elm-magic-macros/`, `crates/elm-magic-egui/`
-> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5.0: 96개(기본) / 100개(`--all-features`) → **v0.6: 135개 / 139개**
+> 최초 작성: 테스트 36개 → v0.4: 64개 → v0.5.0: 96개(기본) / 100개(`--all-features`) → v0.6: 135개 / 139개 → **v0.6.1: 138개 / 142개**
 
 ---
 
@@ -238,6 +238,29 @@ linear scan).
 as long as the final binary references at least one symbol from that crate (even from another
 module or CGU). With no references the rlib object is never linked, so nothing registers — an
 unused library contributes no styles, which is the intended outcome.
+
+---
+
+## 2.10 v0.6.1 — 버그 리포트 4번째 ✅ (하이픈 셀렉터)
+
+FreeDF 리포트(2026-09-17)의 BEM 항목. **재현 테스트 먼저**(`tests/bug_report.rs` 버그 4,
+3개)로 고정하고 수정했다 — 리포트의 최소 재현
+(`.tabs__item`은 등록, `.tabs__item--active`는 `None`)이 그대로 `cargo test`에서 돈다.
+
+| # | 증상 | 원인 | 수정 위치 |
+|---|---|---|---|
+| 4 | `.tabs__item--active` / `.my-class`가 `lookup` / `resolve`에서 `None` — 컴파일 에러·경고 없이 "스타일이 안 먹는다"로만 보임 | 매크로 `join_selector()`가 `-` 하나도 단어로 판정해 `.tabs__item--active`를 `.tabs__item - - active`로 조인 → 코어 `Selector::parse` 실패 → `register`가 **조용히 건너뜀** | `css.rs::join_selector`(`-`는 앞 식별자에 이어 붙임), `css.rs::validate_selector`(+`selector_is_valid` / `compound_is_valid` — 코어와 같은 문법을 컴파일타임에 검사), `style.rs::register`(파싱 실패 시 panic) |
+
+- 리포트의 두 제안을 **둘 다** 반영: (1) 하이픈 조인 수정, (2) 파싱 실패를 더 이상
+  조용히 버리지 않음 — `css!`는 이제 컴파일 에러, `style::register` 직접 호출은 panic.
+- 검증: `.a..b` 같은 잘못된 셀렉터는 `proc macro panicked` + 한국어 메시지로
+  컴파일이 멈춘다 (수정 전에는 조용히 미등록).
+- 회귀 테스트 3개: BEM 수정자 등록 / `resolve` 매칭(요소 대조군 포함) / 하이픈 클래스 일반형.
+
+```
+cargo test                            # 138  (0.6.0: 135)
+cargo test --workspace --all-features # 142  (0.6.0: 139)
+```
 
 ---
 
@@ -483,7 +506,7 @@ rustc --edition 2021 --test --emit=metadata \
 | `s39_router_match.rs` | `{match route { … => ui! { <Home /> } }}` | ✅ |
 | `w5.rs` | `<Button disabled={n > 0} on_click={n = 0}>` | ✅ |
 
-### 6.4 기존 테스트 현황 (워크스페이스 135개 통과)
+### 6.4 기존 테스트 현황 (워크스페이스 138개 통과, `--all-features` 142개)
 
 ```
 tests/counter.rs   tests/todo.rs    tests/effects.rs   tests/lifecycle.rs
@@ -492,8 +515,11 @@ tests/style.rs     tests/snapshot.rs
 tests/platform.rs  tests/syntax.rs  tests/timers.rs    tests/widgets.rs
 tests/sugar.rs     tests/store.rs   tests/subs.rs      tests/callbacks.rs
                    tests/integration.rs
+                   tests/bug_report.rs
                    crates/elm-magic-egui/tests/adapter.rs
 ```
+
+- `tests/bug_report.rs` — 버그 리포트 회귀 (v0.5 3건 + v0.6.1 BEM 수정자, 9개)
 
 - `tests/syntax.rs` — 매크로 문법 픽스 7건 (범위/메서드/컴마/축약/분기 통일/캡처/소유 반복)
 - `tests/timers.rs` — 시간 리터럴, `after` 없는 `on_change`, 지연 효과 + mock
