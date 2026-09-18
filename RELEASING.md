@@ -1,7 +1,8 @@
 # Releasing
 
-Publishes three crates to crates.io — **`elm-magic` / `elm-magic-macros` / `elm-magic-egui`** —
-and always keeps their versions in lockstep. (Published: 0.1.0, 0.5.0, 0.6.0 → next: **0.6.1**)
+Publishes four crates to crates.io — **`elm-magic` / `elm-magic-macros` /
+`elm-magic-egui` / `elm-magic-gpui`** — and always keeps their versions in lockstep.
+(Published: 0.1.0, 0.5.0, 0.6.0, 0.6.1, 0.7.0 → next: **0.7.1**)
 
 ## 0. Prepare
 
@@ -10,28 +11,33 @@ cargo login            # crates.io API token (or CARGO_REGISTRY_TOKEN)
 cargo search elm-magic # check the currently published version
 ```
 
-## 1. Bump the version — keep these 5 places in sync
+## 1. Bump the version — keep these 7 places in sync
 
 | File | Field |
 |---|---|
 | `Cargo.toml` | `[package] version` |
-| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.6.1" }` |
+| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.7.1" }` |
 | `crates/elm-magic-macros/Cargo.toml` | `[package] version` |
 | `crates/elm-magic-egui/Cargo.toml` | `[package] version` |
-| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.6.1" }` |
+| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.1" }` |
+| `crates/elm-magic-gpui/Cargo.toml` | `[package] version` |
+| `crates/elm-magic-gpui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.1" }` |
 
 `Cargo.lock` updates itself on the next `cargo build`.
-Also refresh `README.md`'s install snippet (`elm-magic = "0.6"`) and `CHANGELOG.md`.
+Also refresh `README.md`'s install snippet (`elm-magic = "0.7"`) and `CHANGELOG.md`.
+
+`elm-magic-gpui` was **first published in 0.7.1** — for that release only, the
+"published versions" list in the header above grew from three crates to four.
 
 ## 2. Local verification (mandatory before publishing — it cannot be undone)
 
 ```sh
-cargo test --workspace                  # 138
-cargo test --workspace --all-features   # 142
+cargo test --workspace                  # 183
+cargo test --workspace --all-features   # 187
 
 cargo package --allow-dirty -p elm-magic-macros
 
-# The not-yet-published 0.6.1 dependencies are substituted with local patches so that
+# The not-yet-published 0.7.1 dependencies are substituted with local patches so that
 # packaging can be verified *ahead of time*.
 cargo package --allow-dirty -p elm-magic \
   --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
@@ -39,11 +45,15 @@ cargo package --allow-dirty -p elm-magic \
 cargo package --allow-dirty -p elm-magic-egui \
   --config 'patch.crates-io.elm-magic.path="."' \
   --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
+
+cargo package --allow-dirty -p elm-magic-gpui \
+  --config 'patch.crates-io.elm-magic.path="."' \
+  --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
 ```
 
 - The `--config patch…` flags are **verification only** — never leave patches in `Cargo.toml`.
 - Without them `-p elm-magic` fails with
-  `failed to select a version for the requirement elm-magic-macros = "^0.6.1"` because 0.6.1
+  `failed to select a version for the requirement elm-magic-macros = "^0.7.1"` because 0.7.1
   is not on crates.io yet. That is expected.
 - `--allow-dirty` is fine here: the working tree holds the version bump plus generated files
   (and `README.md` is a work in progress).
@@ -52,14 +62,14 @@ cargo package --allow-dirty -p elm-magic-egui \
 
 ```sh
 git add -A
-git commit -m "chore: release v0.6.1"
-git tag v0.6.1
+git commit -m "chore: release v0.7.1"
+git tag v0.7.1
 git push origin HEAD --tags
 ```
 
 ## 4. Publish — order matters
 
-Dependency direction: `elm-magic-macros` → `elm-magic` → `elm-magic-egui`
+Dependency direction: `elm-magic-macros` → `elm-magic` → `elm-magic-egui` / `elm-magic-gpui`
 
 ```sh
 cargo publish -p elm-magic-macros
@@ -69,9 +79,12 @@ cargo search elm-magic-macros
 
 cargo publish -p elm-magic
 cargo publish -p elm-magic-egui
+cargo publish -p elm-magic-gpui   # first published in 0.7.1, no propagation wait needed
 ```
 
-- `elm-magic` requires `elm-magic-macros = "0.6.1"`, so the macro crate must go first.
+- `elm-magic` requires `elm-magic-macros = "0.7.1"`, so the macro crate must go first.
+- Both adapters require `elm-magic = "0.7.1"`, so they go last — after the index has
+  propagated (check `cargo search elm-magic`).
 - The patch verification in step 2 is local-only; the real publish must use this order.
 - `cargo publish --dry-run` needs registry access. Offline it fails with
   `attempting to make an HTTP request, but --offline was specified` — run it online.

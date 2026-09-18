@@ -10,9 +10,9 @@ UI 라이브러리. **런타임 의존성은 0**이다 — `cargo tree -p elm-ma
 
 ```toml
 [dependencies]
-elm-magic = "0.6"
-elm-magic-egui = "0.6"   # egui 어댑터 (선택)
-elm-magic-gpui = "0.6"   # gpui-kit 어댑터 (선택)
+elm-magic = "0.7"
+elm-magic-egui = "0.7"   # egui 어댑터 (선택)
+elm-magic-gpui = "0.7"   # gpui-kit 어댑터 (선택)
 ```
 
 ## 빠른 시작

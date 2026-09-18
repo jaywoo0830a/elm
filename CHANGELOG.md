@@ -3,6 +3,59 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.7.1] — 2026-09-18
+
+`on_change`의 버그 두 개를 고치고 **gpui-kit 어댑터**(`elm-magic-gpui`)를 추가했다.
+공개 API 변경 없음 — 어댑터 크레이트가 하나 늘었을 뿐이다.
+
+### Added — gpui-kit 어댑터 (`elm-magic-gpui`)
+
+`elm-magic-egui`와 **같은 계약**을 gpui 위에서 구현한 새 크레이트.
+이번 릴리즈가 첫 퍼블리시다.
+
+- `palette(theme) -> Palette` — elm-magic 토큰 14개를 gpui-kit `ThemeColor`에
+  매핑한다. 팔레트는 **활성 gpui-kit 테마(`ActiveTheme`)에서 파생**되므로,
+  라이트/다크/커스텀 테마를 바꾸면 `css!` 색도 따라온다 (`bg: surface`가
+  테마를 따라간다).
+- `apply()` — 코어가 해석한 `ResolvedStyle`을 gpui 스타일로 옮긴다.
+  **코어는 계산만, 어댑터는 매핑만** 한다는 egui 어댑터의 분업을 그대로 지킨다.
+- `ElmView<C>`가 gpui `Render`를 구현하고 모든 위젯 variant를 그린다.
+  `<Raw>`는 `&mut gpui_kit::Window`를 받는다.
+- README에 gpui-kit 사용 절을 추가했다.
+- 의도된 한계: `:hover` / `:active` / `:focus` 슈도 상태, `Modal` 오버레이,
+  Input의 커서·IME·선택은 아직 매핑하지 않는다.
+
+### Fixed — `on_change` 콜백 두 가지 (콜백 계약 테스트가 잡음)
+
+`tests/callbacks.rs`의 코어 콜백 계약(1부)을 고정하는 과정에서 드러난
+`on_change`의 버그 두 개 (`crates/elm-magic-macros/src/jsx.rs`):
+
+- **마운트 시 발화**: 첫 렌더에서 `pending = None → 초기값`을 "변경"으로
+  오인했다. 그래서 `on_change(x) { … }`가 마운트에서 한 번 실행됐고,
+  `on_change(x) after 300ms`는 값이 한 번도 바뀌지 않아도 시계만 흐르면
+  발화했다. 이제 첫 렌더의 값을 **기준선**으로 삼고 발화하지 않는다
+  (마운트 시점 작업은 `on_mount`가 담당한다).
+- **재무장 실패**: 값이 바뀌어 디바운스를 다시 무장할 때 `fired = false`를
+  슬롯에 되쓰지 않아, 다음 렌더가 이전의 `true`를 읽었다. 결과적으로
+  `on_change(x) after …`가 **컴포넌트 수명당 최대 1회**만 발화했다.
+  이제 무장 상태를 매 렌더 되쓴다.
+- **회귀 테스트**: `tests/callbacks.rs` — 위 두 버그를 직접 재현하는
+  `immediate_on_change_does_not_fire_on_mount`,
+  `debounce_does_not_fire_on_mount_even_after_the_delay_elapses`,
+  `debounce_restarts_on_every_change_and_delivers_the_latest_value` 포함
+
+### Tests
+
+- `tests/callbacks.rs`에 **1부 — 코어 콜백 계약**(어댑터 무관) 섹션 **31개**를
+  통합 — 기존 `callbacks.rs`(콜백 prop + children, 2부)와 한 파일에 모았다.
+  어댑터를 거치지 않고 코어 콜백 계약만 검증한다: `on_click` /
+  `on_change`(값·bool) / `on_enter` / `on_change … after` / `on_mount` /
+  `on_unmount` / `on_key` / `on_tick` / `on_event`+`bus.emit` /
+  `on_net_change` / `on_navigate` / `<-` 효과 / 콜백 prop.
+  명세가 모호한 지점(같은 키 중복 등록, 놓친 틱, `disabled` 클릭)은
+  "현재 의미론" 주석과 함께 고정해, 바뀌면 테스트가 알려준다.
+- `cargo test --workspace` = **183** (0.7.0: 152), `--all-features` = **187** (156)
+
 ## [0.7.0] — 2026-09-18
 
 **Widget Protocol** — `Element`가 데이터 enum에서 **위젯 구조체들의 enum**으로 바뀌고,
@@ -48,37 +101,10 @@
 - 위젯 구조체 각각이 `Serialize`를 얻고, `Element`는 그 구조체들의 enum으로
   직렬화된다. JSON 표현은 0.6과 동일(`{"Button": {..}}`) — 스냅샷 테스트 그대로 통과.
 
-### Fixed — `on_change` 콜백 두 가지 (콜백 계약 테스트가 잡음)
-
-`tests/callbacks.rs`의 코어 콜백 계약(1부)을 고정하는 과정에서 드러난
-`on_change`의 버그 두 개 (`crates/elm-magic-macros/src/jsx.rs`):
-
-- **마운트 시 발화**: 첫 렌더에서 `pending = None → 초기값`을 "변경"으로
-  오인했다. 그래서 `on_change(x) { … }`가 마운트에서 한 번 실행됐고,
-  `on_change(x) after 300ms`는 값이 한 번도 바뀌지 않아도 시계만 흐르면
-  발화했다. 이제 첫 렌더의 값을 **기준선**으로 삼고 발화하지 않는다
-  (마운트 시점 작업은 `on_mount`가 담당한다).
-- **재무장 실패**: 값이 바뀌어 디바운스를 다시 무장할 때 `fired = false`를
-  슬롯에 되쓰지 않아, 다음 렌더가 이전의 `true`를 읽었다. 결과적으로
-  `on_change(x) after …`가 **컴포넌트 수명당 최대 1회**만 발화했다.
-  이제 무장 상태를 매 렌더 되쓴다.
-- **회귀 테스트**: `tests/callbacks.rs` — 위 두 버그를 직접 재현하는
-  `immediate_on_change_does_not_fire_on_mount`,
-  `debounce_does_not_fire_on_mount_even_after_the_delay_elapses`,
-  `debounce_restarts_on_every_change_and_delivers_the_latest_value` 포함
-
 ### Tests
 
-- `tests/callbacks.rs`에 **1부 — 코어 콜백 계약**(어댑터 무관) 섹션 **31개**를
-  통합 — 기존 `callbacks.rs`(콜백 prop + children, 2부)와 한 파일에 모았다.
-  어댑터를 거치지 않고 코어 콜백
-  계약만 검증한다: `on_click` / `on_change`(값·bool) / `on_enter` /
-  `on_change … after` / `on_mount` / `on_unmount` / `on_key` / `on_tick` /
-  `on_event`+`bus.emit` / `on_net_change` / `on_navigate` / `<-` 효과 /
-  콜백 prop. 명세가 모호한 지점(같은 키 중복 등록, 놓친 틱, `disabled` 클릭)은
-  "현재 의미론" 주석과 함께 고정해, 바뀌면 테스트가 알려준다.
 - `tests/widget_protocol.rs` 신규 **14개**
-- `cargo test --workspace` = **183** (0.6.1: 138), `--all-features` = **187** (142)
+- `cargo test --workspace` = **152** (0.6.1: 138), `--all-features` = **156** (142)
 
 ## [0.6.1] — 2026-09-18
 
@@ -239,5 +265,7 @@ Selector matching, cascade, inheritance, and **36 properties across 14 tags**.
 - `Desktop` / `Web` / `Terminal` 플랫폼 — 미구현 (현재 `Headless` + egui 어댑터)
 - 상세: `prototype/prototypes/implementation-status.md`
 
+[0.7.1]: https://github.com/jaywoo0830a/elm/releases/tag/v0.7.1
+[0.7.0]: https://github.com/jaywoo0830a/elm/releases/tag/v0.7.0
 [0.6.1]: https://github.com/jaywoo0830a/elm/releases/tag/v0.6.1
 [0.5.0]: https://github.com/jaywoo0830a/elm/releases/tag/v0.5.0
