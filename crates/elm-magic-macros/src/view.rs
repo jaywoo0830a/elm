@@ -290,13 +290,13 @@ fn expand_fn(
         default_inits.push(format!("{}: ::core::option::Option::None", pname));
         match &default_toks {
             Some(d) => slot_inits.push_str(&format!(
-                "    let __elm_state_{p} = __elm_ctx.slot({i}usize, || __elm_props.{p}.clone().unwrap_or({d}));\n",
+                "    let __elm_state_{p} = __elm_ctx.slot_prop({i}usize, __elm_props.{p}.clone(), || {d});\n",
                 p = pname,
                 i = slot_idx,
                 d = render_tokens(d)
             )),
             None => slot_inits.push_str(&format!(
-                "    let __elm_state_{p} = __elm_ctx.slot({i}usize, || __elm_props.{p}.clone().unwrap_or_else(|| panic!(\"elm-magic: 필수 prop `{p}`가 없습니다 — mount_with!로 넘기세요\")));\n",
+                "    let __elm_state_{p} = __elm_ctx.slot_prop({i}usize, __elm_props.{p}.clone(), || panic!(\"elm-magic: 필수 prop `{p}`가 없습니다 — mount_with!로 넘기세요\"));\n",
                 p = pname,
                 i = slot_idx
             )),

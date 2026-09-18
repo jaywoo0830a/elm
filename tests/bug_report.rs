@@ -22,6 +22,21 @@
 //!    "format argument must be a string literal"이 나던 문제
 //! 10) prop/속성 위치의 보간 리터럴(`text="도구 {x}"`)이 **조용히** 보간되지
 //!     않고 그대로 렌더되던 문제
+//!
+//! 0.7.4에서 고친 세 번째 리포트(`elm-magic-bug-report.md`)의 남은 항목:
+//!
+//! 11) 값 prop(`text`/`on`/`active`)이 마운트 시점 슬롯으로만 초기화되어,
+//!     부모가 같은 자리에 새 값을 넘겨도 화면이 첫 값에 머물던 문제
+//!     (콜백 prop/children은 정상이었다) — 자식이 직접 쓰기 전까지 prop을
+//!     매 프레임 동기화한다
+//! 12) `Button`/`Tab`이 CSS `padding`·`height`를 무시하던 문제 —
+//!     `crates/elm-magic-egui/tests/adapter.rs`
+//!     (`egui_button_and_tab_respect_padding_and_height`)에서 실제 rect로 고정한다
+//! 13) `css!` 자기등록이 ELF 전용 `.init_array`에만 묶여 Windows(MSVC)/Mach-O에서
+//!     실행되지 않던 문제 — `crates/elm-magic-macros/src/css.rs`의 플랫폼별 시작
+//!     섹션(`.CRT$XCU` / `__DATA,__mod_init_func` / `.init_array`)과
+//!     `style::init_styles()`. 전역 레지스트리를 비우는 테스트라
+//!     `tests/init_styles.rs`(단독 프로세스)에 둔다.
 
 // ── 버그 1: `pub fn` / `pub(crate) fn` ──────────────────────
 
@@ -422,5 +437,98 @@ fn interpolated_literal_in_class_is_expanded() {
         tree.contains(".c.true"),
         "class=\"c {{active}}\"가 보간돼야 한다:\n{}",
         tree
+    );
+}
+
+// ── 버그 11: 값 prop이 재렌더에서 갱신되지 않던 문제 ─────────
+//
+// 리포트의 재현 코드 그대로: `Child`는 `on`을 **읽기만** 한다. 부모의
+// `flag`가 바뀌면 자식도 따라와야 한다 (예전에는 마운트 시점 `false` 고정).
+
+elm_magic::view! {
+    fn ValuePropChild(on: bool = false) {
+        <Button class={if on { "btn btn--on" } else { "btn" }}>"child"</Button>
+    }
+
+    fn ValuePropParent(flag = false) {
+        <Col>
+            <ValuePropChild on={flag} />
+            <Button on_click={flag = !flag}>"toggle"</Button>
+        </Col>
+    }
+}
+
+#[test]
+fn value_prop_updates_when_parent_rerenders() {
+    let mut app = elm_magic::testing::mount::<ValuePropParent>();
+    assert!(
+        app.render_tree().contains(".btn\n") || !app.render_tree().contains("btn--on"),
+        "처음에는 --on이 없어야 한다:\n{}",
+        app.render_tree()
+    );
+    app.click("toggle");
+    let tree = app.render_tree();
+    assert!(
+        tree.contains("btn--on"),
+        "부모의 flag가 true가 되면 자식의 on prop도 갱신돼야 한다:\n{}",
+        tree
+    );
+}
+
+// 대조군: 자식이 그 매개변수를 **직접 쓰면** 그때부터 자식의 상태다.
+// (부모가 넘긴 값이 매 프레임 덮어쓰지 않는다 — `slot_dirty`)
+
+elm_magic::view! {
+    fn SelfOwnedChild(n = 0) {
+        <Row>
+            "n={n}"
+            <Button on_click={n += 1}>"inc"</Button>
+        </Row>
+    }
+
+    fn SelfOwnedParent(seed = 0) {
+        <Col>
+            <SelfOwnedChild n={seed} />
+            <Button on_click={seed += 1}>"bump"</Button>
+        </Col>
+    }
+}
+
+#[test]
+fn param_becomes_local_state_once_the_child_writes_it() {
+    let mut app = elm_magic::testing::mount::<SelfOwnedParent>();
+    app.assert_text("n=0");
+    app.click("inc"); // 자식이 n을 직접 쓴다 → 소유권이 자식에게
+    app.assert_text("n=1");
+    app.click("bump"); // 부모의 seed는 바뀌지만 자식의 n은 그대로
+    app.assert_text("n=1");
+}
+
+// `mount_with`로 넘긴 prop은 **초기값**이고, 그 뒤 자식이 쓰면 상태다
+// (top-level 컴포넌트가 prop을 받은 뒤 직접 바꾸는 경우).
+
+elm_magic::view! {
+    fn MountedThenMutated(items: Vec<i32> = vec![]) {
+        <Col>
+            {items.map(|i| <Text>"{i}"</Text>)}
+            <Button on_click={items.reverse()}>"rev"</Button>
+        </Col>
+    }
+}
+
+#[test]
+fn mount_with_prop_is_initial_value_and_stays_mutable() {
+    let mut app = elm_magic::testing::mount_with::<MountedThenMutated>(MountedThenMutatedProps {
+        items: Some(vec![1, 2]),
+        ..Default::default()
+    });
+    app.assert_text("1");
+    app.assert_text("2");
+    app.click("rev");
+    // prop이 매 프레임 덮어썼다면 [1, 2]로 되돌아가 리스트가 그대로다.
+    assert_eq!(
+        app.text(),
+        "2\n1\nrev",
+        "자식이 쓴 뒤에는 prop이 덮어쓰지 않는다"
     );
 }

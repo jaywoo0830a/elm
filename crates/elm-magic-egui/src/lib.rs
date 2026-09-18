@@ -310,7 +310,7 @@ fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle) {
     }
 }
 
-/// 위젯 최소 크기 (버튼) — `width`/`height`가 있을 때만.
+/// 위젯 최소 크기 (버튼) — `width`/`height`(또는 `min-height`)가 있을 때만.
 fn min_size(style: &ResolvedStyle) -> Option<egui::Vec2> {
     let w = match style.width {
         Some(Len::Px(v)) => v,
@@ -318,13 +318,34 @@ fn min_size(style: &ResolvedStyle) -> Option<egui::Vec2> {
     };
     let h = match style.height {
         Some(Len::Px(v)) => v,
-        _ => 0.0,
+        _ => style.min_height.unwrap_or(0.0),
     };
     if w > 0.0 || h > 0.0 {
         Some(egui::vec2(w, h))
     } else {
         None
     }
+}
+
+/// CSS `padding`을 egui 버튼의 내부 여백으로 옮겨 실행한다 (0.7.4 — 리포트 버그 12).
+///
+/// egui는 `Button`/`SelectableLabel`의 패딩을 `spacing.button_padding`에서
+/// 읽는다. 그 값은 가로·세로만 표현하므로 `padding: 8`(네 방향)과
+/// `padding: 8 16`(상하/좌우)까지 반영된다. 예전에는 `Button`/`Tab`이
+/// `padding`을 아예 무시해 rect가 변하지 않았다.
+fn with_button_padding<R>(
+    ui: &mut egui::Ui,
+    style: &ResolvedStyle,
+    f: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let Some(padding) = style.padding else {
+        return f(ui);
+    };
+    let saved = ui.spacing().button_padding;
+    ui.spacing_mut().button_padding = egui::vec2(padding.left, padding.top);
+    let out = f(ui);
+    ui.spacing_mut().button_padding = saved;
+    out
 }
 
 /// `cursor` + `opacity` + `visibility`를 UI/응답에 적용한다.
@@ -509,7 +530,8 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                     .unwrap_or_else(|| palette.get(Token::Border));
                 button = button.stroke(egui::Stroke::new(width, color32(c)));
             }
-            let resp = ui.add_enabled(!disabled, button);
+            // `padding`을 egui의 버튼 내부 여백으로 옮긴다 (0.7.4 — 버그 12).
+            let resp = with_button_padding(ui, &style, |ui| ui.add_enabled(!disabled, button));
 
             let resp = decorate(ui, resp, &style);
             if resp.clicked() {
@@ -526,7 +548,25 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             on_click,
             ..
         }) => {
-            let resp = ui.selectable_label(*active, rich(text, &style, false));
+            // `selectable_label`은 크기를 받지 못하므로 `Button::selectable`을
+            // 직접 써서 `padding`·`height`를 반영한다 (0.7.4 — 버그 12).
+            let mut button = egui::Button::selectable(*active, rich(text, &style, false));
+            if let Some(bg) = style.bg {
+                button = button.fill(color32(bg));
+            }
+            if let Some(r) = style.radius {
+                button = button.corner_radius(radius(r));
+            }
+            if let Some(size) = min_size(&style) {
+                button = button.min_size(size);
+            }
+            if let Some(width) = style.border_width {
+                let c = style
+                    .border_color
+                    .unwrap_or_else(|| palette.get(Token::Border));
+                button = button.stroke(egui::Stroke::new(width, color32(c)));
+            }
+            let resp = with_button_padding(ui, &style, |ui| ui.add(button));
             let resp = decorate(ui, resp, &style);
             if resp.clicked() {
                 if let Some(h) = on_click {

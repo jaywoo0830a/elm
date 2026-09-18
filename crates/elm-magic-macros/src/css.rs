@@ -3,6 +3,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static CSS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// 플랫폼별 **시작 초기화 섹션** 속성 (0.7.4 — 리포트 버그 13).
+///
+/// `.init_array`는 ELF 전용이라 MSVC(PE/COFF)에서는 실행되지 않는다.
+/// MSVC의 CRT는 `.CRT$XCU`를, Apple은 `__DATA,__mod_init_func`를 걷는다.
+/// 셋 중 **정확히 하나만** 활성화되도록 `cfg_attr`로 분기한다.
+const CTOR_SECTION_ATTRS: &str = "\
+    #[cfg_attr(target_env = \"msvc\", link_section = \".CRT$XCU\")] \
+    #[cfg_attr(target_vendor = \"apple\", link_section = \"__DATA,__mod_init_func\")] \
+    #[cfg_attr( \
+        not(any(target_env = \"msvc\", target_vendor = \"apple\")), \
+        link_section = \".init_array\" \
+    )]";
+
 /// 값의 종류 — 컴파일타임 검증에 쓴다.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -111,15 +124,20 @@ const TOKENS: &[(&str, &str)] = &[
 /// **컴파일타임에 검증한다** — 깨진 셀터, 모르는 속성/값, 한 블록 안의
 /// 중복은 모두 즉시 컴파일 에러다 (조용히 버리지 않는다).
 ///
-/// Emits items that self-register at process startup (`.init_array` ctor),
-/// so `css!` can be used at item position like the spec shows.
+/// Emits items that self-register at process startup (ctor in the platform's
+/// init section), so `css!` can be used at item position like the spec shows.
 ///
-/// Platform note (실측, 2026-09): ELF/Mach-O 전용이다.
+/// Platform note (0.7.4 — 리포트 버그 13):
+/// - ELF → `.init_array`, Apple(Mach-O) → `__DATA,__mod_init_func`,
+///   Windows MSVC(PE/COFF) → `.CRT$XCU`. MSVC의 CRT는 `.init_array`를 실행하지
+///   않으므로, 예전에는 Windows 빌드에서 `style::len() == 0`이 되어 모든
+///   `class="…"`가 무시됐다.
 /// - 최종 바이너리가 그 크레이트의 심볼을 **하나라도** 참조하면 (다른 모듈·다른
 ///   codegen unit이어도) 등록이 실행된다 — 라이브러리에서 `css!`를 써도 된다.
-/// - 아무것도 참조하지 않으면 커가 rlib 객체를 포함하지 않아 등록되지 않는다
+/// - 아무것도 참조하지 않으면 링커가 rlib 객체를 포함하지 않아 등록되지 않는다
 ///   (안 쓰는 라이브러리 = 스타일도 없음 — 의도된 결과).
-/// - wasm은 다른 메커니이 필요하다.
+/// - wasm은 다른 메커니즘이 필요하다 — `style::init_styles()`로 다시 적용할 수
+///   있지만 그마저도 시작 등록이 한 번은 돌아야 한다.
 pub fn expand(input: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = input.into_iter().collect();
     let mut i = 0;
@@ -175,11 +193,28 @@ pub fn expand(input: TokenStream) -> TokenStream {
             ::elm_magic::style::register(::std::vec![{}]); \
         }} \
         #[used] \
-        #[link_section = \".init_array\"] \
+        {section} \
         static __ELM_CSS_CTOR_{n}: extern \"C\" fn() = __elm_css_register_{n};",
-        rules.join(", ")
+        rules.join(", "),
+        section = CTOR_SECTION_ATTRS
     );
     code.parse().expect("elm-magic css!: 잘된 코드 생성")
+}
+
+#[cfg(test)]
+mod tests {
+    /// 플랫폼별 시작 섹션이 **셋 다** 들어 있고 서로 배타적인지 고정한다
+    /// (0.7.4 — 리포트 버그 13: MSVC에서 등록이 안 돌던 문제).
+    #[test]
+    fn ctor_section_attrs_cover_elf_macho_and_msvc() {
+        let a = super::CTOR_SECTION_ATTRS;
+        assert!(a.contains("target_env = \"msvc\""), "{a}");
+        assert!(a.contains(".CRT$XCU"), "{a}");
+        assert!(a.contains("target_vendor = \"apple\""), "{a}");
+        assert!(a.contains("__DATA,__mod_init_func"), "{a}");
+        assert!(a.contains("not(any(target_env = \"msvc\", target_vendor = \"apple\"))"));
+        assert!(a.contains(".init_array"), "{a}");
+    }
 }
 
 /// 문자열 리터럴이면 따옴표를 걷어 내용을 돌려준다 (`"…"`, `r"…"`, `r#"…"#`).

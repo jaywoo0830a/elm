@@ -222,3 +222,66 @@ fn egui_display_none_skips_rendering() {
     );
     assert_eq!(pass.buttons[0].0, "always");
 }
+
+// ── 0.7.4 — Button/Tab의 CSS padding·height (리포트 버그 12) ──
+//
+// `design-audit` 실측: Button은 padding을 바꿔도 rect의 w/h가 변하지 않았고,
+// Tab은 padding도 height도 무시했다(h 19 고정). 실제 rect로 고정한다.
+
+elm_magic::css! {
+    .egui_sized { padding: 12 20; height: 30; }
+}
+
+elm_magic::view! {
+    fn Sized() {
+        <Col>
+            <Button class="egui_sized">"pad"</Button>
+            <Button>"pad"</Button>
+            <Tab class="egui_sized">"tab"</Tab>
+            <Tab>"tab"</Tab>
+        </Col>
+    }
+}
+
+#[test]
+fn egui_button_and_tab_respect_padding_and_height() {
+    let mut app = elm_magic::mount::<Sized>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+
+    // 같은 라벨이 둘씩이므로 등장 순서로 (스타일 적용본, 대조군)을 고른다.
+    let rect = |label: &str, nth: usize| {
+        pass.buttons
+            .iter()
+            .filter(|(l, _)| l == label)
+            .nth(nth)
+            .unwrap_or_else(|| panic!("{label} #{nth} not rendered"))
+            .1
+            .rect
+    };
+    let padded_btn = rect("pad", 0);
+    let plain_btn = rect("pad", 1);
+    let padded_tab = rect("tab", 0);
+    let plain_tab = rect("tab", 1);
+
+    assert!(
+        padded_btn.height() >= 30.0,
+        "Button이 height: 30을 따라야 한다: {padded_btn:?}"
+    );
+    assert!(
+        padded_btn.width() > plain_btn.width(),
+        "Button의 padding이 rect 폭을 키워야 한다: {} vs {}",
+        padded_btn.width(),
+        plain_btn.width()
+    );
+    assert!(
+        padded_tab.height() >= 30.0,
+        "Tab이 height: 30을 따라야 한다 (예전에는 19 고정): {padded_tab:?}"
+    );
+    assert!(
+        padded_tab.width() > plain_tab.width(),
+        "Tab의 padding이 rect 폭을 키워야 한다: {} vs {}",
+        padded_tab.width(),
+        plain_tab.width()
+    );
+}

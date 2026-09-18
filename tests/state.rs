@@ -315,13 +315,14 @@ elm_magic::view! {
 }
 
 #[test]
-fn param_is_initial_state_not_a_live_prop() {
-    // 사양서 4.1: 매개변수는 **상태 슬롯**이다. 부모가 새 값을 넘겨도 이미
-    // 만들어진 자식 인스턴스의 상태는 바뀌지 않는다 (초기값으로만 쓰인다).
+fn param_is_a_live_prop_until_the_child_writes_it() {
+    // 0.7.4: 매개변수는 **자식이 직접 쓰기 전까지** 부모 prop을 따라간다.
+    // `PropChild`는 `text`를 읽기만 하므로 부모가 새 값을 넘기면 화면도 바뀐다.
+    // (0.7.3까지는 마운트 시점 초기값에 머물렀다 — 리포트 버그 11.)
     let mut app = elm_magic::testing::mount::<PropParent>();
     app.assert_text("child: s1");
     app.click("bump");
-    app.assert_text("child: s1"); // s2가 아니다
+    app.assert_text("child: s2"); // 이제 prop이 살아 있다
 }
 
 elm_magic::view! {
@@ -343,21 +344,20 @@ elm_magic::view! {
 }
 
 #[test]
-fn keyless_list_state_follows_position_not_item() {
-    // `key={id}`가 없으면 인스턴스 경로가 형제 순번(`@0`, `@1`)이라 상태가
-    // **자리**를 따라간다. 게다가 `id` prop도 초기값(사양서 4.1)이라,
-    // 목록을 뒤집어도 화면은 그대로다 — 항목을 따라가려면 5절처럼 `key`를 쓴다.
+fn keyless_list_state_follows_position_but_prop_follows_item() {
+    // `key={id}`가 없으면 인스턴스 경로가 형제 순번(`@0`, `@1`)이라 **상태**는
+    // **자리**를 따라간다 (`n`: 자리 0의 1이 그대로 남는다). 반면 `id`는 읽기만
+    // 하는 값 prop이라 항목 값을 따라간다 (0.7.4). 항목 전체를 따라가려면
+    // 5절처럼 `key`를 쓴다.
     let mut app = elm_magic::testing::mount_with::<PositionList>(PositionListProps {
         ids: Some(vec![1, 2]),
         ..Default::default()
     });
     app.click("inc1");
-    let before = app.render_tree();
     app.assert_text("1:1");
     app.click("rev");
-    assert_eq!(
-        app.render_tree(),
-        before,
-        "키 없는 목록은 상태도 prop도 자리를 따라간다 (현재 의미론)"
-    );
+    // 자리 0은 상태 n=1을 유지하고 id만 2로 갱신된다.
+    app.assert_text("2:1");
+    // 자리 1은 n=0, id=1.
+    app.assert_text("1:0");
 }

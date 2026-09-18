@@ -1292,7 +1292,15 @@ fn registry() -> &'static Mutex<Registry> {
     REG.get_or_init(|| Mutex::new(Registry::default()))
 }
 
-/// `css!`가 부르는 등록. 같은 렉터는 ** 등록이 이긴다**.
+/// `css!`가 등록한 항목을 **다시 적용**할 수 있도록 순서대로 기억한다 (0.7.4).
+///
+/// 시작 섹션(ctor)이 도는 플랫폼에서는 `register`가 불릴 때마다 쌓인다.
+fn recorded() -> &'static Mutex<Vec<(String, StyleSpec)>> {
+    static REC: OnceLock<Mutex<Vec<(String, StyleSpec)>>> = OnceLock::new();
+    REC.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// `css!`가 부르는 등록. 같은 렉터는 **먼저 등록된 것이 이긴다**.
 ///
 /// 셀렉터 목록(`.a, .b`)은 여기서 나눠 따로 등록한다.
 ///
@@ -1301,6 +1309,18 @@ fn registry() -> &'static Mutex<Registry> {
 /// 검사하므로(`macros::css::validate_selector`) 여기서 걸리는 것은
 /// `register`를 직접 부른 경우뿐이다.
 pub fn register(entries: Vec<(&str, StyleSpec)>) {
+    // `init_styles()`가 다시 적용할 수 있게 기억한다 (0.7.4 — 리포트 버그 13).
+    {
+        let mut rec = recorded().lock().unwrap();
+        for (text, spec) in &entries {
+            rec.push((text.to_string(), *spec));
+        }
+    }
+    apply(entries);
+}
+
+/// 항목을 레지스트리에 적용한다 (기록하지 않는다 — `register`/`init_styles` 공용).
+fn apply(entries: Vec<(&str, StyleSpec)>) {
     let mut reg = registry().lock().unwrap();
     for (text, spec) in entries {
         for one in text.split(',') {
@@ -1327,6 +1347,31 @@ pub fn register(entries: Vec<(&str, StyleSpec)>) {
             reg.by_text.insert(one.to_string(), order);
         }
     }
+}
+
+/// 지금까지 등록된 `css!` 규칙을 **다시 적용**한다 (0.7.4 — 리포트 버그 13).
+///
+/// 시작 섹션(ctor)이 도는 플랫폼에서는 등록이 이미 끝나 있어 이 호출은
+/// 멱등한 안전판이다. 시작 등록이 돌지 않은 플랫폼(예: wasm)에서는 기억된
+/// 항목이 없어 아무 일도 하지 않는다 — 그 경우는 다른 메커니즘이 필요하다.
+/// `main()`에서 한 줄 부르면 스타일이 사라지는 사고를 막을 수 있다.
+pub fn init_styles() {
+    let owned: Vec<(String, StyleSpec)> = {
+        let rec = recorded().lock().unwrap();
+        rec.clone()
+    };
+    let entries: Vec<(&str, StyleSpec)> = owned.iter().map(|(s, spec)| (s.as_str(), *spec)).collect();
+    apply(entries);
+}
+
+/// 테스트 전용: 등록된 규칙을 비운다 (`init_styles`가 다시 채우는지 확인용).
+///
+/// 전역 레지스트리를 건드리므로 **단독 테스트 바이너리**에서만 쓴다.
+#[doc(hidden)]
+pub fn reset_for_tests() {
+    let mut reg = registry().lock().unwrap();
+    reg.rules.clear();
+    reg.by_text.clear();
 }
 
 /// 렉터 스트 그대로의 조회 (`.card`, `button`, `.card Button`).

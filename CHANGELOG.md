@@ -3,6 +3,52 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.7.4] — 2026-09-18
+
+세 번째 버그 리포트의 남은 3항목(11~13)을 고쳤다. 공개 API는 **추가만** 있다:
+`style::init_styles` (그리고 테스트 전용 `style::reset_for_tests`).
+
+### Fixed — 값 prop이 재렌더에서 갱신되지 않던 문제 (버그 11)
+
+- **자식의 값 prop이 마운트 시점에 고정** — `view!`가 매개변수 슬롯을
+  `slot(idx, || props.p.clone().unwrap_or(default))`로 초기화하는데 `slot()`은
+  처음 한 번만 초기화를 부르므로, 부모가 같은 자리에 새 값을 넘겨도 화면은
+  첫 값에 머물렀다. 이제 `slot_prop(idx, props.p.clone(), || default)`가 매
+  프레임 prop을 반영한다 (`<Child on={flag} />` → 부모의 `flag`를 따라간다).
+- 단, 자식이 그 매개변수를 `set`/`mutate`로 **직접 쓰면** 그때부터는 자식의
+  상태다 (`Arena::slot_dirty`) — 부모 prop이 덮어쓰지 않는다. `mount_with!`로
+  넘긴 prop도 초기값으로 쓰이고, 그 뒤 자식이 쓰면 살아남는다.
+- 회귀 테스트: `tests/bug_report.rs` 3개, `tests/state.rs` 6절 두 테스트의
+  의미론 갱신 (`param_is_a_live_prop_until_the_child_writes_it`,
+  `keyless_list_state_follows_position_but_prop_follows_item`).
+
+### Fixed — `Button`/`Tab`이 CSS `padding`·`height`를 무시 (버그 12)
+
+- **egui 어댑터가 버튼 패딩을 옮기지 않았다** — `Button`은 `min_size`만,
+  `Tab`은 `selectable_label`이라 `padding`이 rect에 전혀 반영되지 않았고
+  `Tab`은 `height`도 무시했다(h 19 고정). 이제 CSS `padding`을
+  `spacing.button_padding`으로 옮기고(`with_button_padding`), `Tab`도
+  `Button::selectable(..).min_size(..)`로 그린다. `min-height`도 최소 크기로 쓴다.
+- 회귀 테스트: `crates/elm-magic-egui/tests/adapter.rs`
+  `egui_button_and_tab_respect_padding_and_height` — 실제 rect 폭/높이로 고정.
+
+### Fixed — `css!` 자기등록이 MSVC/Mach-O에서 안 돌던 문제 (버그 13)
+
+- **ELF 전용 `.init_array`** — Windows(PE/COFF)의 CRT는 `.init_array`를 실행하지
+  않아 `style::len() == 0`, 모든 `class="…"`가 무시됐다(egui 기본 회색 UI).
+  이제 시작 섹션을 플랫폼별로 분기한다: MSVC `.CRT$XCU`,
+  Apple `__DATA,__mod_init_func`, ELF `.init_array`.
+- **명시적 초기화** — `style::init_styles()`가 지금까지의 `css!` 등록을 다시
+  적용한다(멱등). 시작 등록이 안 도는 플랫폼의 안전판이며 `main()`에 한 줄
+  부르면 된다.
+- 회귀 테스트: `crates/elm-magic-macros/src/css.rs` 단위 테스트(섹션 3종),
+  `tests/init_styles.rs`(단독 프로세스 — `reset_for_tests` 후 재적용).
+
+### Tests
+
+- `cargo test --workspace` = **206** (0.7.3: 200), `--all-features` = **210** (204),
+  **경고 0개**.
+
 ## [0.7.3] — 2026-09-18
 
 **지역/전역 상태의 수명**을 자체 점검해서 찾은 버그를 고쳤다 — `tests/callbacks.rs`와

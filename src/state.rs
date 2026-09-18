@@ -69,6 +69,13 @@ impl FrameTail {
 #[derive(Default)]
 pub struct Arena {
     slots: Vec<Option<Box<dyn Any>>>,
+    /// 자식이 **직접 쓴** 슬롯 인덱스 (0.7.4 — 리포트 버그 11).
+    ///
+    /// 매개변수 슬롯은 부모가 넘긴 prop을 매 프레임 따라간다. 단, 자식이
+    /// `set`/`mutate`로 그 슬롯을 한 번이라도 쓰면 그때부터는 자식의 상태가
+    /// 되어 prop이 덮어쓰지 않는다. 이 집합이 "자식이 소유권을 가져갔는가"를
+    /// 기억한다. 슬롯이 버려지면(`drop_instance`) 함께 지운다.
+    slot_dirty: HashSet<usize>,
     /// `#[store]` 전역 상태 — `"App.user"` 같은 이름 키 (사양서 4.2).
     stores: HashMap<&'static str, Box<dyn Any>>,
     /// store 필드별 버전 카운터 (사양서 4.2 — 변경 추적).
@@ -122,6 +129,7 @@ impl Arena {
         self.ensure_len(idx);
         if self.slots[idx].is_none() {
             self.slots[idx] = Some(Box::new(init()));
+            self.slot_dirty.remove(&idx);
         }
         State {
             key: SlotKey::Index(idx),
@@ -145,6 +153,8 @@ impl Arena {
         // 타이머/구독이 늦게 도착해도 죽은 슬롯을 되살리지 않는다.
         if self.slots[idx].is_some() {
             self.slots[idx] = Some(Box::new(value));
+            // 자식이 소유권을 가져갔다 — 이제 prop이 덮어쓰지 않는다 (0.7.4).
+            self.slot_dirty.insert(idx);
         }
     }
 
@@ -154,9 +164,15 @@ impl Arena {
         }
         // `set`과 같은 규칙: 버려진 슬롯에 대한 쓰기는 조용히 버린다 (0.7.3).
         // 예전에는 `+=`/`push`/`remove`가 "slot not initialized"로 패닉했다.
+        let mut wrote = false;
         if let Some(v) = self.slots[idx].as_mut() {
             let v = v.downcast_mut::<T>().expect("slot type mismatch");
             f(v);
+            wrote = true;
+        }
+        if wrote {
+            // 자식이 소유권을 가져갔다 — 이제 prop이 덮어쓰지 않는다 (0.7.4).
+            self.slot_dirty.insert(idx);
         }
     }
 
@@ -222,7 +238,51 @@ impl Arena {
     /// 인스턴스 경로별 슬롯: 같은 키는 같은 슬롯(상태 보존),
     /// 사라진 키는 `drop_instance`가 초기화한다.
     pub fn keyed_slot<T: 'static>(&mut self, key: &str, init: impl FnOnce() -> T) -> State<T> {
-        let idx = match self.key_index.get(key) {
+        let idx = self.keyed_index(key);
+        self.ensure_len(idx);
+        if self.slots[idx].is_none() {
+            self.slots[idx] = Some(Box::new(init()));
+            self.slot_dirty.remove(&idx);
+        }
+        State {
+            key: SlotKey::Index(idx),
+            _pd: PhantomData,
+        }
+    }
+
+    /// [`keyed_slot`] + **prop 동기화** (0.7.4 — 리포트 버그 11).
+    ///
+    /// 자식 컴포넌트 매개변수 슬롯은 부모가 넘긴 `prop`을 매 프레임 반영한다.
+    /// 그래서 `<Child on={flag} />`에서 부모의 `flag`가 바뀌면 자식 화면도
+    /// 따라온다 (예전에는 마운트 시점 값에 머물렀다).
+    ///
+    /// 단, 자식이 그 슬롯을 `set`/`mutate`로 한 번이라도 쓰면 그때부터는
+    /// **자식의 상태**가 되어 prop이 덮어쓰지 않는다 (`slot_dirty`).
+    pub fn keyed_slot_prop<T: 'static>(
+        &mut self,
+        key: &str,
+        prop: Option<T>,
+        default: impl FnOnce() -> T,
+    ) -> State<T> {
+        let idx = self.keyed_index(key);
+        self.ensure_len(idx);
+        if self.slots[idx].is_none() {
+            self.slots[idx] = Some(Box::new(prop.unwrap_or_else(default)));
+            self.slot_dirty.remove(&idx);
+        } else if let Some(v) = prop {
+            if !self.slot_dirty.contains(&idx) {
+                self.slots[idx] = Some(Box::new(v));
+            }
+        }
+        State {
+            key: SlotKey::Index(idx),
+            _pd: PhantomData,
+        }
+    }
+
+    /// 경로 키 → 전역 슬롯 인덱스 (없으면 새로 만든다).
+    fn keyed_index(&mut self, key: &str) -> usize {
+        match self.key_index.get(key) {
             Some(i) => *i,
             None => {
                 let i = self.key_next;
@@ -230,14 +290,6 @@ impl Arena {
                 self.key_index.insert(key.to_string(), i);
                 i
             }
-        };
-        self.ensure_len(idx);
-        if self.slots[idx].is_none() {
-            self.slots[idx] = Some(Box::new(init()));
-        }
-        State {
-            key: SlotKey::Index(idx),
-            _pd: PhantomData,
         }
     }
 
@@ -256,6 +308,9 @@ impl Arena {
         for k in dead {
             if let Some(idx) = self.key_index.remove(&k) {
                 self.slots[idx] = None;
+                // 버려진 슬롯의 소유권 표시도 함께 지운다 — 인덱스가 재사용될 때
+                // 옛 인스턴스의 흔적이 남지 않게 (0.7.4).
+                self.slot_dirty.remove(&idx);
             }
         }
     }
@@ -595,6 +650,20 @@ impl Ctx {
     pub fn slot<T: 'static>(&mut self, idx: usize, init: impl FnOnce() -> T) -> State<T> {
         let key = format!("{}#{}", self.path, idx);
         self.arena.keyed_slot(&key, init)
+    }
+
+    /// 컴포넌트 매개변수 슬롯 + **prop 동기화** (0.7.4 — 리포트 버그 11).
+    ///
+    /// `prop`이 `Some`이면 자식이 아직 그 슬롯을 직접 쓰지 않은 동안 매 프레임
+    /// 그 값으로 갱신된다. 자식이 쓰면 그때부터 자식의 상태다.
+    pub fn slot_prop<T: 'static>(
+        &mut self,
+        idx: usize,
+        prop: Option<T>,
+        default: impl FnOnce() -> T,
+    ) -> State<T> {
+        let key = format!("{}#{}", self.path, idx);
+        self.arena.keyed_slot_prop(&key, prop, default)
     }
 
     /// store 전역 상태 (사양서 4.2).
