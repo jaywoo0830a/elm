@@ -22,7 +22,13 @@ impl<'a> Env<'a> {
         callbacks: &'a HashSet<String>,
         stores: &'a HashMap<String, crate::store::StoreInfo>,
     ) -> Self {
-        Env { states, slots, callbacks, has_children: false, stores }
+        Env {
+            states,
+            slots,
+            callbacks,
+            has_children: false,
+            stores,
+        }
     }
 }
 
@@ -78,12 +84,7 @@ fn bus_emit(_env: &Env, toks: &[TokenTree], i: usize) -> Option<(String, usize)>
 
 /// `net.is_online()` — 플랫폼 연결 상태 (사양서 5.3).
 fn net_is_online(toks: &[TokenTree], i: usize) -> Option<usize> {
-    match (
-        &toks[i],
-        toks.get(i + 1),
-        toks.get(i + 2),
-        toks.get(i + 3),
-    ) {
+    match (&toks[i], toks.get(i + 1), toks.get(i + 2), toks.get(i + 3)) {
         (
             TokenTree::Ident(a),
             Some(TokenTree::Punct(p)),
@@ -184,9 +185,8 @@ fn punct(c: char) -> TokenTree {
     TokenTree::Punct(p)
 }
 fn parse_ts(s: &str) -> TokenStream {
-    s.parse().unwrap_or_else(|e| {
-        panic!("elm-magic internal: bad generated code {:?}: {:?}", s, e)
-    })
+    s.parse()
+        .unwrap_or_else(|e| panic!("elm-magic internal: bad generated code {:?}: {:?}", s, e))
 }
 
 /// 이벤트 본문에서의 위치 — `Stmt`는 문장(대입·메서드 호출·효과),
@@ -319,9 +319,7 @@ fn read_expr(name: &str, arena: &str) -> String {
 fn uses_state(toks: &[TokenTree], env: &Env) -> bool {
     toks.iter().any(|t| match t {
         TokenTree::Ident(id) => env.states.contains(&id.to_string()),
-        TokenTree::Group(g) => {
-            uses_state(&g.stream().into_iter().collect::<Vec<_>>(), env)
-        }
+        TokenTree::Group(g) => uses_state(&g.stream().into_iter().collect::<Vec<_>>(), env),
         _ => false,
     })
 }
@@ -479,7 +477,6 @@ fn local_iter_sugar(toks: &[TokenTree], i: usize, env: &Env) -> Option<(TokenStr
     }
 }
 
-
 pub fn transform_top(toks: &[TokenTree], env: &Env) -> TokenStream {
     transform_children(toks, env, ';')
 }
@@ -591,7 +588,8 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                             {
                                 // `|path| body` — 닫는 `|`가 있으면 건너뛴다
                                 let mut start = 2;
-                                if matches!(inner.get(start), Some(TokenTree::Punct(pp)) if pp.as_char() == '|') {
+                                if matches!(inner.get(start), Some(TokenTree::Punct(pp)) if pp.as_char() == '|')
+                                {
                                     start += 1;
                                 }
                                 let body: Vec<TokenTree> = inner[start..].to_vec();
@@ -622,9 +620,9 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                             && g.delimiter() == Delimiter::Brace =>
                     {
                         let inner: Vec<TokenTree> = args.stream().into_iter().collect();
-                        let comma = inner.iter().position(
-                            |t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','),
-                        );
+                        let comma = inner
+                            .iter()
+                            .position(|t| matches!(t, TokenTree::Punct(p) if p.as_char() == ','));
                         let (src, slot) = match comma {
                             Some(c) if c + 1 < inner.len() => {
                                 (inner[..c].to_vec(), inner[c + 1..].to_vec())
@@ -668,11 +666,9 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                         if key.delimiter() == Delimiter::Parenthesis
                             && g.delimiter() == Delimiter::Brace =>
                     {
-                        let key_ts = transform_render(
-                            &key.stream().into_iter().collect::<Vec<_>>(),
-                            env,
-                        )
-                        .to_string();
+                        let key_ts =
+                            transform_render(&key.stream().into_iter().collect::<Vec<_>>(), env)
+                                .to_string();
                         let body: Vec<TokenTree> = g.stream().into_iter().collect();
                         let body_ts = transform_event(&body, env, None, Level::Stmt).to_string();
                         pieces.push((
@@ -726,7 +722,9 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                 // on_change(expr) { ... }            — 즉시(변경 감지)
                 // on_change(expr) after 300ms { ... } — 디바운스 (사양서 5.2)
                 let val = match toks.get(i + 1) {
-                    Some(TokenTree::Group(v)) if v.delimiter() == Delimiter::Parenthesis => v.clone(),
+                    Some(TokenTree::Group(v)) if v.delimiter() == Delimiter::Parenthesis => {
+                        v.clone()
+                    }
                     _ => panic!(
                         "elm-magic: on_change expects on_change(expr) [after <dur>] {{ ... }}"
                     ),
@@ -745,8 +743,8 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                         "elm-magic: on_change expects on_change(expr) [after <dur>] {{ ... }}"
                     ),
                 };
-                let val_ts =
-                    transform_render(&val.stream().into_iter().collect::<Vec<_>>(), env).to_string();
+                let val_ts = transform_render(&val.stream().into_iter().collect::<Vec<_>>(), env)
+                    .to_string();
                 let p_slot = env.slots.get();
                 let s_slot = p_slot + 1;
                 let f_slot = p_slot + 2;
@@ -1169,7 +1167,13 @@ fn transform_event(
                 TokenTree::Group(g) => g.clone(),
                 _ => unreachable!(),
             };
-            out.extend(parse_ts(&emit_stream(&lhs, &tname, &body_group, env, "_elm_a")));
+            out.extend(parse_ts(&emit_stream(
+                &lhs,
+                &tname,
+                &body_group,
+                env,
+                "_elm_a",
+            )));
             i = j + 4;
             if i < toks.len() {
                 if let TokenTree::Punct(sp) = &toks[i] {
@@ -1256,66 +1260,60 @@ fn transform_event(
             if env.states.contains(&name) {
                 // effect? `a, b <- expr [after <dur>]` (사양서 5.1, 5.2)
                 if level == Level::Stmt {
-                if let Some((targets, rhs_start)) = try_parse_effect(toks, i, env) {
-                    let (mut rhs_end, _term) = stmt_end(toks, rhs_start);
-                    // `after 300ms` 접미사 → 지연 효과 (advance(ms)가 실행)
-                    let mut delay: Option<String> = None;
-                    for k in rhs_start..rhs_end {
-                        if matches!(&toks[k], TokenTree::Ident(id) if id.to_string() == "after") {
-                            let (d_end, _) = stmt_end(toks, k + 1);
-                            delay = Some(duration_expr(&toks[k + 1..d_end]));
-                            rhs_end = k;
-                            break;
-                        }
-                    }
-                    let rhs: Vec<TokenTree> = toks[rhs_start..rhs_end].to_vec();
-                    let rhs_ts =
-                        transform_event_read(&rhs, env, value_binding, Level::Expr).to_string();
-                    // simple call `f(a, b)` → dispatch through the mock
-                    // registry (사양서 8.2); other RHS forms run as-is
-                    let fut_expr = match rhs.as_slice() {
-                        [TokenTree::Ident(f), TokenTree::Group(g)]
-                            if g.delimiter() == Delimiter::Parenthesis
-                                && !env.states.contains(&f.to_string()) =>
-                        {
-                            let args: Vec<TokenTree> = g.stream().into_iter().collect();
-                            let mut parts: Vec<Vec<TokenTree>> = vec![Vec::new()];
-                            for t in args {
-                                if matches!(&t, TokenTree::Punct(p) if p.as_char() == ',') {
-                                    parts.push(Vec::new());
-                                } else {
-                                    parts.last_mut().unwrap().push(t);
-                                }
+                    if let Some((targets, rhs_start)) = try_parse_effect(toks, i, env) {
+                        let (mut rhs_end, _term) = stmt_end(toks, rhs_start);
+                        // `after 300ms` 접미사 → 지연 효과 (advance(ms)가 실행)
+                        let mut delay: Option<String> = None;
+                        for k in rhs_start..rhs_end {
+                            if matches!(&toks[k], TokenTree::Ident(id) if id.to_string() == "after")
+                            {
+                                let (d_end, _) = stmt_end(toks, k + 1);
+                                delay = Some(duration_expr(&toks[k + 1..d_end]));
+                                rhs_end = k;
+                                break;
                             }
-                            let parts: Vec<Vec<TokenTree>> = parts
-                                .into_iter()
-                                .filter(|p| !p.is_empty())
-                                .collect();
-                            let n = parts.len();
-                            let args_ts: Vec<String> = parts
-                                .iter()
-                                .map(|p| {
-                                    transform_event_read(p, env, value_binding, Level::Expr)
-                                        .to_string()
-                                })
-                                .collect();
-                            let args_list = args_ts.join(", ");
-                            let real_call = format!("{}({})", f, args_list);
-                            let tuple = match n {
-                                0 => "()".to_string(),
-                                1 => format!("({},)", args_list),
-                                _ => format!("({})", args_list),
-                            };
-                            let any_args = (0..n)
-                                .map(|k| {
-                                    format!(
-                                        "&__elm_args.{} as &dyn ::std::any::Any",
-                                        k
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            format!(
+                        }
+                        let rhs: Vec<TokenTree> = toks[rhs_start..rhs_end].to_vec();
+                        let rhs_ts =
+                            transform_event_read(&rhs, env, value_binding, Level::Expr).to_string();
+                        // simple call `f(a, b)` → dispatch through the mock
+                        // registry (사양서 8.2); other RHS forms run as-is
+                        let fut_expr = match rhs.as_slice() {
+                            [TokenTree::Ident(f), TokenTree::Group(g)]
+                                if g.delimiter() == Delimiter::Parenthesis
+                                    && !env.states.contains(&f.to_string()) =>
+                            {
+                                let args: Vec<TokenTree> = g.stream().into_iter().collect();
+                                let mut parts: Vec<Vec<TokenTree>> = vec![Vec::new()];
+                                for t in args {
+                                    if matches!(&t, TokenTree::Punct(p) if p.as_char() == ',') {
+                                        parts.push(Vec::new());
+                                    } else {
+                                        parts.last_mut().unwrap().push(t);
+                                    }
+                                }
+                                let parts: Vec<Vec<TokenTree>> =
+                                    parts.into_iter().filter(|p| !p.is_empty()).collect();
+                                let n = parts.len();
+                                let args_ts: Vec<String> = parts
+                                    .iter()
+                                    .map(|p| {
+                                        transform_event_read(p, env, value_binding, Level::Expr)
+                                            .to_string()
+                                    })
+                                    .collect();
+                                let args_list = args_ts.join(", ");
+                                let real_call = format!("{}({})", f, args_list);
+                                let tuple = match n {
+                                    0 => "()".to_string(),
+                                    1 => format!("({},)", args_list),
+                                    _ => format!("({})", args_list),
+                                };
+                                let any_args = (0..n)
+                                    .map(|k| format!("&__elm_args.{} as &dyn ::std::any::Any", k))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                format!(
                                 "{{ \
                                 let __elm_args = {}; \
                                 ::elm_magic::runtime::maybe_mock({:?}, {}, \
@@ -1323,22 +1321,22 @@ fn transform_event(
                                 }}",
                                 tuple, f.to_string(), real_call, f.to_string(), any_args
                             )
-                        }
-                        _ => format!("({})", rhs_ts),
-                    };
-                    let mut sets = String::new();
-                    for (n, t) in targets.iter().enumerate() {
-                        let out = if targets.len() == 1 {
-                            "__elm_out".to_string()
-                        } else {
-                            format!("__elm_out.{}", n)
+                            }
+                            _ => format!("({})", rhs_ts),
                         };
-                        sets.push_str(&format!(
-                            "__elm_state_{}.set(__elm_a2, ({}).clone()); ",
-                            t, out
-                        ));
-                    }
-                    let spawn = match &delay {
+                        let mut sets = String::new();
+                        for (n, t) in targets.iter().enumerate() {
+                            let out = if targets.len() == 1 {
+                                "__elm_out".to_string()
+                            } else {
+                                format!("__elm_out.{}", n)
+                            };
+                            sets.push_str(&format!(
+                                "__elm_state_{}.set(__elm_a2, ({}).clone()); ",
+                                t, out
+                            ));
+                        }
+                        let spawn = match &delay {
                         Some(d) => format!(
                             "_elm_a.spawn_after({}, __elm_fut, move |__elm_a2: &mut ::elm_magic::Arena, __elm_out| {{ {} }})",
                             d, sets
@@ -1348,16 +1346,16 @@ fn transform_event(
                             sets
                         ),
                     };
-                    let emitted = format!("{{ let __elm_fut = {}; {}; }}", fut_expr, spawn);
-                    out.extend(parse_ts(&emitted));
-                    let (end, term) = stmt_end(toks, rhs_start);
-                    i = end;
-                    if term.is_some() {
-                        out.push(punct(';'));
-                        i += 1;
+                        let emitted = format!("{{ let __elm_fut = {}; {}; }}", fut_expr, spawn);
+                        out.extend(parse_ts(&emitted));
+                        let (end, term) = stmt_end(toks, rhs_start);
+                        i = end;
+                        if term.is_some() {
+                            out.push(punct(';'));
+                            i += 1;
+                        }
+                        continue;
                     }
-                    continue;
-                }
                 }
                 // struct-literal field key `name:` stays verbatim
                 let is_field_key = matches!(toks.get(i + 1), Some(TokenTree::Punct(p))
@@ -1478,7 +1476,8 @@ fn transform_event(
                                 }
                                 // 반환값은 버린다 (`items.remove(0)`처럼 값을 돌려주는
                                 // 메서드도 문장으로 쓸 수 있게)
-                                let emitted = format!(
+                                let emitted =
+                                    format!(
                                     "{{ {} {}.mutate(_elm_a, |__v| {{ let _ = __v.{}({}); }}); }}",
                                     decl, state_var, m.to_string(), call_args
                                 );
@@ -1602,14 +1601,13 @@ fn text_expr(content: &str, env: &Env) -> TokenStream {
     } else {
         let mut parts: Vec<String> = Vec::new();
         for a in &args {
-            let toks: Vec<TokenTree> =
-                a.parse::<TokenStream>().unwrap().into_iter().collect();
+            let toks: Vec<TokenTree> = a.parse::<TokenStream>().unwrap().into_iter().collect();
             parts.push(transform_render(&toks, env).to_string());
         }
         format!("::std::format!({:?}, {})", fmt, parts.join(", "))
     };
     format!(
-        "::elm_magic::Element::Text {{ text: {}, class: ::std::vec![] }}",
+        "::elm_magic::Element::Text(::elm_magic::TextEl {{ text: {}, class: ::std::vec![] }})",
         text
     )
     .parse()
@@ -1774,10 +1772,7 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
                         if id.to_string() == tag && gt.as_char() == '>' {
                             if depth == 0 {
                                 let children: Vec<TokenTree> = toks[children_start..j].to_vec();
-                                return (
-                                    emit_element(&tag, &attrs, Some(&children), env),
-                                    j + 4,
-                                );
+                                return (emit_element(&tag, &attrs, Some(&children), env), j + 4);
                             }
                             depth -= 1;
                         }
@@ -1831,7 +1826,9 @@ fn attr_string(attrs: &[(String, AttrVal)], key: &str, default: &str) -> String 
 ///   (예전에는 문자열 하나로 들어가 어떤 셀렉터와도 안 맞았다).
 /// - `class={expr}` → `IntoClasses`가 문자열/목록을 받는다 (사양서 6.2).
 fn class_tokens(attrs: &[(String, AttrVal)]) -> String {
-    let value = attrs.iter().find_map(|(k, v)| if k == "class" { Some(v) } else { None });
+    let value = attrs
+        .iter()
+        .find_map(|(k, v)| if k == "class" { Some(v) } else { None });
     match value {
         Some(AttrVal::Lit(s)) => {
             let parts: Vec<String> = s
@@ -1848,11 +1845,7 @@ fn class_tokens(attrs: &[(String, AttrVal)]) -> String {
     }
 }
 
-fn event_closure(
-    attrs: &[(String, AttrVal)],
-    key: &str,
-    value_ty: Option<&str>,
-) -> String {
+fn event_closure(attrs: &[(String, AttrVal)], key: &str, value_ty: Option<&str>) -> String {
     let body = attrs.iter().find_map(|(k, v)| match (k, v) {
         (k, AttrVal::Expr(e)) if k == key => Some(e.to_string()),
         _ => None,
@@ -1927,7 +1920,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Text {{ text: {}, class: {} }}",
+                "::elm_magic::Element::Text(::elm_magic::TextEl {{ text: {}, class: {} }})",
                 text,
                 class_tokens(attrs)
             )
@@ -1935,7 +1928,8 @@ fn emit_element(
         "Col" | "Row" => {
             let children_ts = transform_children(children.unwrap_or(&[]), env, ',').to_string();
             format!(
-                "::elm_magic::Element::{} {{ class: {}, children: {}, on_click: {} }}",
+                "::elm_magic::Element::{}(::elm_magic::{}El {{ class: {}, children: {}, on_click: {} }})",
+                tag,
                 tag,
                 class_tokens(attrs),
                 children_ts,
@@ -1948,7 +1942,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Button {{ text: {}, class: {}, disabled: {}, on_click: {} }}",
+                "::elm_magic::Element::Button(::elm_magic::ButtonEl {{ text: {}, class: {}, disabled: {}, on_click: {} }})",
                 text,
                 class_tokens(attrs),
                 attr_expr(attrs, "disabled").unwrap_or_else(|| "false".to_string()),
@@ -1957,7 +1951,7 @@ fn emit_element(
         }
         "Input" => {
             format!(
-                "::elm_magic::Element::Input {{ value: {}, class: {}, on_change: {}, on_enter: {} }}",
+                "::elm_magic::Element::Input(::elm_magic::InputEl {{ value: {}, class: {}, on_change: {}, on_enter: {} }})",
                 attr_string(attrs, "value", "::std::string::String::new()"),
                 class_tokens(attrs),
                 event_closure(attrs, "on_change", Some("::std::string::String")),
@@ -1966,7 +1960,7 @@ fn emit_element(
         }
         "TextArea" => {
             format!(
-                "::elm_magic::Element::TextArea {{ value: {}, class: {}, on_change: {}, on_enter: {} }}",
+                "::elm_magic::Element::TextArea(::elm_magic::TextAreaEl {{ value: {}, class: {}, on_change: {}, on_enter: {} }})",
                 attr_string(attrs, "value", "::std::string::String::new()"),
                 class_tokens(attrs),
                 event_closure(attrs, "on_change", Some("::std::string::String")),
@@ -1979,7 +1973,7 @@ fn emit_element(
                 _ => attr_string(attrs, "label", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Check {{ checked: {}, label: {}, class: {}, on_change: {} }}",
+                "::elm_magic::Element::Check(::elm_magic::CheckEl {{ checked: {}, label: {}, class: {}, on_change: {} }})",
                 attr_expr(attrs, "checked").unwrap_or_else(|| "false".to_string()),
                 label,
                 class_tokens(attrs),
@@ -1992,7 +1986,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Strong {{ text: {}, class: {} }}",
+                "::elm_magic::Element::Strong(::elm_magic::StrongEl {{ text: {}, class: {} }})",
                 text,
                 class_tokens(attrs)
             )
@@ -2003,7 +1997,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Banner {{ kind: {}, text: {}, class: {} }}",
+                "::elm_magic::Element::Banner(::elm_magic::BannerEl {{ kind: {}, text: {}, class: {} }})",
                 attr_string(attrs, "kind", "::std::string::String::from(\"info\")"),
                 text,
                 class_tokens(attrs)
@@ -2015,7 +2009,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Tab {{ text: {}, active: {}, class: {}, on_click: {} }}",
+                "::elm_magic::Element::Tab(::elm_magic::TabEl {{ text: {}, active: {}, class: {}, on_click: {} }})",
                 text,
                 attr_expr(attrs, "active").unwrap_or_else(|| "false".to_string()),
                 class_tokens(attrs),
@@ -2028,7 +2022,7 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Th {{ text: {}, class: {}, on_click: {} }}",
+                "::elm_magic::Element::Th(::elm_magic::ThEl {{ text: {}, class: {}, on_click: {} }})",
                 text,
                 class_tokens(attrs),
                 event_closure(attrs, "on_click", None),
@@ -2040,28 +2034,28 @@ fn emit_element(
                 _ => attr_string(attrs, "text", "::std::string::String::new()"),
             };
             format!(
-                "::elm_magic::Element::Td {{ text: {}, class: {} }}",
+                "::elm_magic::Element::Td(::elm_magic::TdEl {{ text: {}, class: {} }})",
                 text,
                 class_tokens(attrs)
             )
         }
         "Spinner" => format!(
-            "::elm_magic::Element::Spinner {{ class: {} }}",
+            "::elm_magic::Element::Spinner(::elm_magic::SpinnerEl {{ class: {} }})",
             class_tokens(attrs)
         ),
         "Divider" => format!(
-            "::elm_magic::Element::Divider {{ class: {} }}",
+            "::elm_magic::Element::Divider(::elm_magic::DividerEl {{ class: {} }})",
             class_tokens(attrs)
         ),
         "Progress" => format!(
-            "::elm_magic::Element::Progress {{ value: {}, class: {} }}",
+            "::elm_magic::Element::Progress(::elm_magic::ProgressEl {{ value: {}, class: {} }})",
             attr_expr(attrs, "value").unwrap_or_else(|| "0.0".to_string()),
             class_tokens(attrs)
         ),
         "Modal" => {
             let children_ts = transform_children(children.unwrap_or(&[]), env, ',').to_string();
             format!(
-                "::elm_magic::Element::Modal {{ title: {}, class: {}, on_close: {}, children: {} }}",
+                "::elm_magic::Element::Modal(::elm_magic::ModalEl {{ title: {}, class: {}, on_close: {}, children: {} }})",
                 attr_string(attrs, "title", "::std::string::String::new()"),
                 class_tokens(attrs),
                 event_closure(attrs, "on_close", None),
@@ -2089,9 +2083,9 @@ fn emit_raw(children: &[TokenTree]) -> TokenStream {
         panic!("elm-magic: <Raw> expects a closure: <Raw>|ui: &mut T| {{ ... }}</Raw>");
     }
     let template = parse_ts(
-        "::elm_magic::Element::Raw { class: ::std::vec![], widget: \
+        "::elm_magic::Element::Raw(::elm_magic::RawEl { class: ::std::vec![], widget: \
          ::std::rc::Rc::new(move |__elm_payload: &mut dyn ::std::any::Any| \
-         ::elm_magic::raw::call_raw(__elm_payload, __elm_user_closure)) }",
+         ::elm_magic::raw::call_raw(__elm_payload, __elm_user_closure)) })",
     );
     let result = substitute_ident(
         template,
@@ -2173,10 +2167,9 @@ fn emit_component(
                 "{}: ::core::option::Option::Some(::std::string::String::from({:?})), ",
                 k, s
             )),
-            AttrVal::Expr(e) => fields.push_str(&format!(
-                "{}: ::core::option::Option::Some({}), ",
-                k, e
-            )),
+            AttrVal::Expr(e) => {
+                fields.push_str(&format!("{}: ::core::option::Option::Some({}), ", k, e))
+            }
         }
     }
     if let Some(c) = children {
@@ -2192,7 +2185,12 @@ fn emit_component(
     // (props를 먼저 만들면 그 안의 자식 인스턴스들이 형제 순번을 먼저 가져가
     //  부모 경로가 흔들린다. `key={i.id}`가 `i`를 borrow하는 것과도 순서가 맞아야 한다.)
     let key = key_attr(attrs)
-        .map(|k| format!("::core::option::Option::Some(::elm_magic::key_of(&({})))", k))
+        .map(|k| {
+            format!(
+                "::core::option::Option::Some(::elm_magic::key_of(&({})))",
+                k
+            )
+        })
         .unwrap_or_else(|| "::core::option::Option::None".to_string());
     let code = format!(
         "{{ let __elm_key = {k};           let __elm_seg = __elm_ctx.instance_segment(__elm_key, {t:?});           let __elm_p = {t}Props {{ {f}..::core::default::Default::default() }};           let __elm_e = __elm_ctx.with_instance(__elm_seg, |__elm_ctx| {t}::render(__elm_ctx, &__elm_p));           __elm_e }}",
@@ -2200,7 +2198,8 @@ fn emit_component(
         t = tag,
         f = fields
     );
-    code.parse().expect("elm-magic internal: bad component code")
+    code.parse()
+        .expect("elm-magic internal: bad component code")
 }
 
 /// 분기 본문(블록) → 값 식.
@@ -2380,12 +2379,3 @@ fn transform_element_expr(inner: &[TokenTree], env: &Env) -> TokenStream {
     }
     transform_render(inner, env)
 }
-
-
-
-
-
-
-
-
-

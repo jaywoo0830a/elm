@@ -37,9 +37,9 @@ fn counter_decrements() {
 fn ui_macro_standalone() {
     let el = elm_magic::ui! { <Col class="x"><Text>"hi"</Text><Button disabled={true}>"go"</Button></Col> };
     match &el {
-        elm_magic::Element::Col { class, children, .. } => {
-            assert_eq!(class, &vec!["x".to_string()]);
-            assert_eq!(children.len(), 2);
+        elm_magic::Element::Col(col) => {
+            assert_eq!(col.class, vec!["x".to_string()]);
+            assert_eq!(col.children.len(), 2);
         }
         other => panic!("expected Col, got {:?}", std::mem::discriminant(other)),
     }

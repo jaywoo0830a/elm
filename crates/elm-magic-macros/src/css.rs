@@ -205,9 +205,8 @@ fn unquote(piece: &str) -> Option<String> {
 /// Rust 토큰은 공백을 보존하지 않으므로 **클래스 사이 후손**(`.a .b`)은
 /// 구분할 수 없다 — 그런 셀렉터는 문자열로 쓴다: `".a .b" { … }`.
 fn join_selector(pieces: &[String]) -> String {
-    let word = |s: &str| {
-        s == "*" || (!s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'))
-    };
+    let word =
+        |s: &str| s == "*" || (!s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'));
     let hyphen = |s: &str| !s.is_empty() && s.chars().all(|c| c == '-');
     let mut out = String::new();
     let mut prev_word = false;
@@ -405,7 +404,11 @@ fn flush(
     let Some((_, field, kind)) = PROPS.iter().find(|(n, _, _)| *n == name) else {
         panic!(
             "elm-magic css!: 모르는 속성 `{name}` (셀렉터 `{selector}`). 지원: {}",
-            PROPS.iter().map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ")
+            PROPS
+                .iter()
+                .map(|(n, _, _)| *n)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     };
     if declared.contains(&name) {
@@ -436,7 +439,10 @@ fn emit_field(name: &str, field: &str, kind: Kind, value: &str, selector: &str) 
         Kind::Len => some(match value {
             "fill" | "full" | "100%" => "::elm_magic::style::Len::Fill".to_string(),
             "auto" => "::elm_magic::style::Len::Auto".to_string(),
-            _ => format!("::elm_magic::style::Len::Px({}f32)", parse_num(value, name, selector)),
+            _ => format!(
+                "::elm_magic::style::Len::Px({}f32)",
+                parse_num(value, name, selector)
+            ),
         }),
         Kind::Edges => some(parse_edges(value, name, selector)),
         Kind::Color => some(format!(
@@ -452,7 +458,13 @@ fn emit_field(name: &str, field: &str, kind: Kind, value: &str, selector: &str) 
         Kind::Visibility => some(bool_expr(value, name, selector, "hidden", "visible")),
         Kind::Weight => some(bool_expr(value, name, selector, "bold", "normal")),
         Kind::Style => some(bool_expr(value, name, selector, "italic", "normal")),
-        Kind::Family => some(bool_expr(value, name, selector, "monospace", "proportional")),
+        Kind::Family => some(bool_expr(
+            value,
+            name,
+            selector,
+            "monospace",
+            "proportional",
+        )),
         Kind::Transform => some(format!(
             "::elm_magic::style::Transform::{}",
             transform_variant(value, name, selector)
@@ -488,10 +500,12 @@ fn bool_expr(value: &str, name: &str, selector: &str, yes: &str, no: &str) -> St
 fn token_variant(value: &str, name: &str, selector: &str) -> &'static str {
     match TOKENS.iter().find(|(t, _)| *t == value) {
         Some((_, variant)) => variant,
-        None => panic!(
+        None => {
+            panic!(
             "elm-magic css!: `{selector}`의 `{name}` 값 `{value}`는 레트 토큰이 아닙니다. 지원: {}",
             TOKENS.iter().map(|(t, _)| *t).collect::<Vec<_>>().join(", ")
-        ),
+        )
+        }
     }
 }
 
@@ -616,7 +630,12 @@ fn glue(s: &str) -> String {
     let mut i = 0;
     while i < cs.len() {
         if cs[i] == '-' {
-            let left = out.trim_end().chars().next_back().map(word).unwrap_or(false);
+            let left = out
+                .trim_end()
+                .chars()
+                .next_back()
+                .map(word)
+                .unwrap_or(false);
             let mut j = i + 1;
             while cs.get(j) == Some(&' ') {
                 j += 1;

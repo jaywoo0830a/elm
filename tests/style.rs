@@ -82,7 +82,11 @@ fn resolve_cascade_follows_css() {
     assert_eq!(a.padding, Some(Edges::splat(16.0)), "안 은 속성은 남는다");
 
     let b = style_of(&["resolve_loud", "resolve_card"]);
-    assert_eq!(b.gap, Some(32.0), "class 나열 순서는 캐스케이드에 영향 없다");
+    assert_eq!(
+        b.gap,
+        Some(32.0),
+        "class 나열 순서는 캐스케이드에 영향 없다"
+    );
 }
 
 #[test]
@@ -129,16 +133,29 @@ fn resolve_text_decoration_and_weight() {
     assert_eq!(under.underline, Some(true));
     assert_eq!(under.strike, Some(false));
 
-    assert_eq!(style_of(&["resolve_plain"]).bold, Some(false), "weight: normal");
+    assert_eq!(
+        style_of(&["resolve_plain"]).bold,
+        Some(false),
+        "weight: normal"
+    );
 }
 
 #[test]
 fn resolve_edges_shorthands() {
     let s = style_of(&["resolve_box"]);
-    assert_eq!(s.padding, Some(Edges::new(8.0, 16.0, 4.0, 2.0)), "4값 숏핸드");
+    assert_eq!(
+        s.padding,
+        Some(Edges::new(8.0, 16.0, 4.0, 2.0)),
+        "4값 숏핸드"
+    );
     assert_eq!(
         s.margin,
-        Some(Edges { top: 0.0, right: -8.0, bottom: 0.0, left: -8.0 }),
+        Some(Edges {
+            top: 0.0,
+            right: -8.0,
+            bottom: 0.0,
+            left: -8.0
+        }),
         "음수 값"
     );
 }
@@ -150,7 +167,9 @@ fn resolve_accepts_px_suffix() {
     assert_eq!(s.gap, Some(12.0));
     assert_eq!(s.font_size, Some(18.0));
     assert_eq!(
-        elm_magic::style::lookup_class("resolve_px").unwrap().get("gap"),
+        elm_magic::style::lookup_class("resolve_px")
+            .unwrap()
+            .get("gap"),
         Some("12".to_string()),
         "선언 텍스트에는 단위가 남지 않는다"
     );
@@ -171,7 +190,11 @@ fn palette_custom_theme_flows_into_resolution() {
     // 사양서 6.3 — 테마는 팔레트다
     let theme = Palette::dark().with(Token::Primary, Color::rgb(1, 2, 3));
     let tag = style::resolve(&[], "button", &theme);
-    assert_eq!(tag.bg, Some(Color::rgb(1, 2, 3)), "토큰이 테마 색으로 확정된다");
+    assert_eq!(
+        tag.bg,
+        Some(Color::rgb(1, 2, 3)),
+        "토큰이 테마 색으로 확정된다"
+    );
 
     let classes = vec!["resolve_card".to_string()];
     let s = style::resolve(&classes, "", &theme);
@@ -192,7 +215,11 @@ fn element_resolved_style_uses_tag_and_class() {
     let el = elm_magic::ui! { <Button class="resolve_loud">"go"</Button> };
     assert_eq!(el.tag(), "button");
     let s = el.resolved_style(&Palette::dark());
-    assert_eq!(s.bg, Some(Palette::dark().get(Token::Primary)), "태그 `button`의 bg");
+    assert_eq!(
+        s.bg,
+        Some(Palette::dark().get(Token::Primary)),
+        "태그 `button`의 bg"
+    );
     assert_eq!(s.radius, Some(6.0), "태그 `button`의 radius");
     assert_eq!(s.gap, Some(32.0), "클래스 `.resolve_loud`의 gap");
 }
@@ -262,7 +289,10 @@ fn selector_parsing_specificity_and_matching() {
 
     // 깨진 셀터는 None
     for bad in ["> a", "a >", ":nope", "..a", "a b >", "", "  "] {
-        assert!(Selector::parse(bad).is_none(), "`{bad}`는 파싱 실패해야 한다");
+        assert!(
+            Selector::parse(bad).is_none(),
+            "`{bad}`는 파싱 실패해야 한다"
+        );
     }
 }
 
@@ -289,7 +319,11 @@ fn descendant_and_child_selectors_use_the_tree() {
     // 손자는 `>`가 안 맞고 후손은 맞는다
     let deep_s = deep.resolved_style_in(&[row, &tree], State::NONE, None, &p);
     assert_eq!(deep_s.padding, None, "`>`는 직계만 — Row가 끼면 안 맞는다");
-    assert_eq!(deep_s.color, Some(p.get(Token::Info)), "후손은 레벨을 건너다");
+    assert_eq!(
+        deep_s.color,
+        Some(p.get(Token::Info)),
+        "후손은 레벨을 건너다"
+    );
     assert_eq!(deep_s.font_size, Some(12.0), "자기 규칙이 상속을 이긴다");
 
     // 토큰 형태 후손(`.sel_root Button`) + 태그 규칙
@@ -299,7 +333,10 @@ fn descendant_and_child_selectors_use_the_tree() {
     assert_eq!(bs.radius, Some(6.0), "`button` 태그 규칙(다른 블록)도 함께");
 
     // 조상이 없으면 후손/자식은 안 맞는다
-    assert_eq!(direct.resolved_style_in(&[], State::NONE, None, &p).padding, None);
+    assert_eq!(
+        direct.resolved_style_in(&[], State::NONE, None, &p).padding,
+        None
+    );
 }
 
 #[test]
@@ -382,8 +419,10 @@ fn extended_properties_are_parsed() {
         ("truncate", "true"),
         ("cursor", "pointer"),
     ];
-    let want: Vec<(String, String)> =
-        want.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let want: Vec<(String, String)> = want
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
     assert_eq!(got, want);
 }
 
@@ -400,7 +439,15 @@ fn extended_properties_resolve_to_typed_values() {
     assert!(s.is_display_none(), "display: none");
     assert_eq!(s.hidden, Some(true), "visibility: hidden");
     assert_eq!(s.border_width, Some(2.0));
-    assert_eq!(s.shadow, Some(style::Shadow { dx: 0.0, dy: 4.0, blur: 8.0, spread: 0.0 }));
+    assert_eq!(
+        s.shadow,
+        Some(style::Shadow {
+            dx: 0.0,
+            dy: 4.0,
+            blur: 8.0,
+            spread: 0.0
+        })
+    );
     assert_eq!(s.opacity, Some(0.5));
     assert_eq!(s.transform, Some(style::Transform::Upper));
     assert_eq!(s.cursor, Some(style::Cursor::Pointer));

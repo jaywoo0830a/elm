@@ -57,7 +57,12 @@ fn new_tags_render_in_tree() {
         "Td \"cell\"",
         "Modal",
     ] {
-        assert!(tree.contains(expected), "missing {:?} in:\n{}", expected, tree);
+        assert!(
+            tree.contains(expected),
+            "missing {:?} in:\n{}",
+            expected,
+            tree
+        );
     }
 }
 

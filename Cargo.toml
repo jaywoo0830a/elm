@@ -3,7 +3,7 @@ members = ["crates/elm-magic-macros", "crates/elm-magic-egui"]
 
 [package]
 name = "elm-magic"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 description = "State is a variable, events are assignment, the screen is the function body. A lightweight pure-functional UI library disguised as JS/JSX via macros."
 license = "MIT"
@@ -16,7 +16,11 @@ categories = ["gui", "rust-patterns"]
 exclude = ["/elm-magic-bug-report*.md"]
 
 [dependencies]
-elm-magic-macros = { path = "crates/elm-magic-macros", version = "0.6.1" }
+elm-magic-macros = { path = "crates/elm-magic-macros", version = "0.7.0" }
+# v0.7 "Widget Protocol": `Element`는 위젯 구조체들의 enum이고, `Widget` 트레이트의
+# 메서드가 각 variant로 **정적 디스패치**된다. 3개 크레이트에 흩어져 있던 `match`를
+# 프로토콜 하나로 모으기 위한 것 — 절차적 매크로라 컴파일타임에만 쓰인다(런타임 비용 0).
+enum_dispatch = "0.3"
 # 선택적 의존성 — 사양서 8.3의 "뷰는 직렬화 가능"(`Element: Serialize`) 계약.
 # 기본 빌드는 여전히 외부 의존성 0 (초경량 유지).
 serde = { version = "1", features = ["derive"], optional = true }

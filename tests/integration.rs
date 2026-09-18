@@ -79,8 +79,14 @@ elm_magic::view! {
 fn shell() -> elm_magic::testing::TestApp<Shell> {
     elm_magic::mount_with::<Shell>(ShellProps {
         items: Some(vec![
-            Item { id: 1, name: "one".to_string() },
-            Item { id: 2, name: "two".to_string() },
+            Item {
+                id: 1,
+                name: "one".to_string(),
+            },
+            Item {
+                id: 2,
+                name: "two".to_string(),
+            },
         ]),
         ..Default::default()
     })
@@ -146,5 +152,3 @@ fn keyed_children_still_dispatch_callbacks() {
     app.click("one");
     app.assert_text("picked: 1");
 }
-
-

@@ -178,7 +178,10 @@ elm_magic::view! {
 
 #[test]
 fn iter_sugar_yields_owned_items() {
-    let app = elm_magic::mount_with::<Sum>(SumProps { values: Some(vec![1.0, 2.0]), ..Default::default() });
+    let app = elm_magic::mount_with::<Sum>(SumProps {
+        values: Some(vec![1.0, 2.0]),
+        ..Default::default()
+    });
     app.assert_text("1");
     app.assert_text("2");
     app.assert_text("doubled: 6");
@@ -195,6 +198,9 @@ elm_magic::view! {
 fn body_may_be_a_whole_conditional() {
     let app = elm_magic::mount!(Whole);
     app.assert_text("[spinner]");
-    let app = elm_magic::mount_with::<Whole>(WholeProps { loading: Some(false), ..Default::default() });
+    let app = elm_magic::mount_with::<Whole>(WholeProps {
+        loading: Some(false),
+        ..Default::default()
+    });
     app.assert_text("done");
 }

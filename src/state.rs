@@ -94,7 +94,10 @@ pub struct Arena {
 
 impl Arena {
     pub fn new() -> Self {
-        Arena { online: true, ..Self::default() }
+        Arena {
+            online: true,
+            ..Self::default()
+        }
     }
 
     /// Simulated clock (ms).
@@ -118,7 +121,10 @@ impl Arena {
         if self.slots[idx].is_none() {
             self.slots[idx] = Some(Box::new(init()));
         }
-        State { key: SlotKey::Index(idx), _pd: PhantomData }
+        State {
+            key: SlotKey::Index(idx),
+            _pd: PhantomData,
+        }
     }
 
     pub fn get<T: 'static>(&self, idx: usize) -> &T {
@@ -154,7 +160,10 @@ impl Arena {
             self.stores.insert(key, Box::new(init()));
             self.store_versions.insert(key, 0);
         }
-        State { key: SlotKey::Store(key), _pd: PhantomData }
+        State {
+            key: SlotKey::Store(key),
+            _pd: PhantomData,
+        }
     }
 
     pub fn store_get<T: 'static>(&self, key: &'static str) -> &T {
@@ -202,7 +211,10 @@ impl Arena {
         if self.slots[idx].is_none() {
             self.slots[idx] = Some(Box::new(init()));
         }
-        State { key: SlotKey::Index(idx), _pd: PhantomData }
+        State {
+            key: SlotKey::Index(idx),
+            _pd: PhantomData,
+        }
     }
 
     /// 인스턴스 경로가 사라졌을 때: 그 경로(와 하위)의 슬롯을 버린다 → 상태 초기화.

@@ -26,9 +26,7 @@ fn collect_idents(toks: &[TokenTree], out: &mut HashSet<String>) {
                     }
                 }
             }
-            TokenTree::Group(g) => {
-                collect_idents(&g.stream().into_iter().collect::<Vec<_>>(), out)
-            }
+            TokenTree::Group(g) => collect_idents(&g.stream().into_iter().collect::<Vec<_>>(), out),
             _ => {}
         }
     }
@@ -54,7 +52,8 @@ fn infer_type(default: &str) -> Option<&'static str> {
         }
         if !t.is_empty()
             && t.contains('.')
-            && t.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            && t.chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
         {
             return Some("f64");
         }
@@ -120,7 +119,12 @@ pub fn expand(item: TokenStream) -> TokenStream {
     }
 
     // `fn Name(params) { body }`
-    match (toks.get(i), toks.get(i + 1), toks.get(i + 2), toks.get(i + 3)) {
+    match (
+        toks.get(i),
+        toks.get(i + 1),
+        toks.get(i + 2),
+        toks.get(i + 3),
+    ) {
         (
             Some(TokenTree::Ident(f)),
             Some(TokenTree::Ident(name)),
@@ -169,7 +173,11 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
                         _ => "()".to_string(),
                     };
                     k += 1;
-                    ty = Some(if arg.trim().is_empty() { "()".to_string() } else { arg });
+                    ty = Some(if arg.trim().is_empty() {
+                        "()".to_string()
+                    } else {
+                        arg
+                    });
                 } else {
                     let mut type_toks = Vec::new();
                     while k < p.len() {
@@ -289,7 +297,9 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     }
     let has_children = used.contains("children") && !state_names.contains("children");
     if has_children {
-        prop_prelude.push_str("    let __elm_children_prop = __elm_props.children.clone().unwrap_or_default();\n");
+        prop_prelude.push_str(
+            "    let __elm_children_prop = __elm_props.children.clone().unwrap_or_default();\n",
+        );
     }
 
     let env = jsx::Env {
@@ -344,8 +354,12 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     if std::env::var_os("ELM_MAGIC_DUMP").is_some() {
         eprintln!("===== elm-magic view! {} =====\n{}", fn_name, code);
     }
-    code.parse()
-        .unwrap_or_else(|e| panic!("elm-magic internal: bad generated code for `{}`: {:?}", fn_name, e))
+    code.parse().unwrap_or_else(|e| {
+        panic!(
+            "elm-magic internal: bad generated code for `{}`: {:?}",
+            fn_name, e
+        )
+    })
 }
 
 /// Serialize tokens honoring joint punctuation spacing, so `::` stays `::`.
@@ -384,4 +398,3 @@ pub(crate) fn render_tokens(toks: &[TokenTree]) -> String {
     }
     s
 }
-

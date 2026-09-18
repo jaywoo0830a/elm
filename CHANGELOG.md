@@ -3,6 +3,56 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.7.0] — 2026-09-18
+
+**Widget Protocol** — `Element`가 데이터 enum에서 **위젯 구조체들의 enum**으로 바뀌고,
+`enum_dispatch`가 `Widget` 트레이트를 각 variant로 정적 디스패치한다.
+3개 크레이트에 흩어져 있던 variant 매칭이 프로토콜 하나로 모였다.
+
+### Added — `Widget` 프로토콜 (`src/widget.rs`)
+
+- `#[enum_dispatch(Widget)] enum Element { Text(TextEl), Button(ButtonEl), ... }`.
+  각 variant는 **위젯 구조체**를 감싼다 (`TextEl`, `ButtonEl`, `ColEl`, …). 새 위젯을
+  추가하면 컴파일러가 빠진 트레이트 메서드를 잡아준다.
+- `Widget` 트레이트가 위젯의 능력을 한 곳에서 답한다: `kind` / `tag` / `class` /
+  `children` / `texts_into` / `role` / `label` / `is_interactive` / `is_disabled` /
+  `on_click` / `on_value_change` / `on_value_enter` / `on_bool_change` / `value` /
+  `checked` / `raw_fn` / `dump`.
+- `Role` (접근성 어휘): `Group` `Text` `Strong` `Banner` `Button` `Tab`
+  `ColumnHeader` `Cell` `TextBox` `Checkbox` `Progress` `Spinner` `Separator`
+  `Dialog` `Raw` `None`.
+
+### Added — role 기반 테스트 셀렉터 & 접근성 트리 (`testing.rs`)
+
+- `Selector` 빌더 + `sel!` 매크로:
+  `sel!(role Button, "+")` / `sel!(role Button)` / `sel!(tag input)` /
+  `sel!(class card)` / `sel!(text "hi")`.
+- `TestApp::click_role(role, label)`, `click_sel(&sel)`, `query(&sel)`, `exists(&sel)`.
+- `TestApp::a11y_tree()`, `roles()`, `has_role(role)` — role/라벨만 남긴 접근성 덤프.
+- 탐색 헬퍼(`find_click`, `find_check`, `input_matches`, `dump`, `raw::invoke`)가
+  **variant 매칭 없이** 프로토콜 질의만으로 동작한다.
+
+### Changed — Breaking
+
+- `Element`의 struct-variant가 tuple-variant로 바뀌었다:
+  - `Element::Button { text, .. }` → `Element::Button(ButtonEl { text, .. })`
+  - 매크로(`ui!` / `view!`)가 생성하는 코드는 자동으로 새 형태다 (사용자 코드 변화 없음).
+  - `Element`를 직접 패턴 매칭하던 코드만 수정이 필요하다 (`tests/counter.rs` 참조).
+- 의존성: `enum_dispatch = "0.3"` (절차적 매크로, **컴파일타임 전용** — 런타임 비용 0).
+- `Element::class/tag/children/texts/subtree_text`는 이제 `Widget`의 메서드다
+  (inherent 메서드로도 그대로 호출 가능).
+- egui 어댑터의 `is_disabled`가 `Widget::is_disabled` 디스패치로 대체됐다.
+
+### 직렬화 (feature `serde`)
+
+- 위젯 구조체 각각이 `Serialize`를 얻고, `Element`는 그 구조체들의 enum으로
+  직렬화된다. JSON 표현은 0.6과 동일(`{"Button": {..}}`) — 스냅샷 테스트 그대로 통과.
+
+### Tests
+
+- `tests/widget_protocol.rs` 신규 **14개**
+- `cargo test --workspace` = **152** (0.6.1: 138), `--all-features` = **156** (142)
+
 ## [0.6.1] — 2026-09-18
 
 `css!`가 하이픈이 들어간 클래스 셀렉터를 조용히 버리던 버그 픽스.

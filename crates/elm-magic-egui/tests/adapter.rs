@@ -215,6 +215,10 @@ fn egui_display_none_skips_rendering() {
     let mut app = elm_magic::mount::<Toggly>();
     let ctx = egui::Context::default();
     let (_, pass) = frame(&ctx, &mut app, input());
-    assert_eq!(pass.buttons.len(), 1, "display:none은 자리도 차지하지 않는다");
+    assert_eq!(
+        pass.buttons.len(),
+        1,
+        "display:none은 자리도 차지하지 않는다"
+    );
     assert_eq!(pass.buttons[0].0, "always");
 }

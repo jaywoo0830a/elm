@@ -159,9 +159,21 @@ fn css_selector_forms_register() {
             .get(key)
     };
     assert_eq!(get("*", "margin").as_deref(), Some("1"), "전체 렉터");
-    assert_eq!(get("Col>Row", "gap").as_deref(), Some("3"), "자식은 `>`로 (공백 없이)");
-    assert_eq!(get(".a .b", "gap").as_deref(), Some("2"), "문자열 렉터는 공백 보존");
-    assert_eq!(get("button:hover", "bg").as_deref(), Some("surface"), "상태");
+    assert_eq!(
+        get("Col>Row", "gap").as_deref(),
+        Some("3"),
+        "자식은 `>`로 (공백 없이)"
+    );
+    assert_eq!(
+        get(".a .b", "gap").as_deref(),
+        Some("2"),
+        "문자열 렉터는 공백 보존"
+    );
+    assert_eq!(
+        get("button:hover", "bg").as_deref(),
+        Some("surface"),
+        "상태"
+    );
     assert_eq!(get(".x", "gap").as_deref(), Some("4"), "그룹은 각각 등록");
     assert_eq!(get(".y", "gap").as_deref(), Some("4"));
 }

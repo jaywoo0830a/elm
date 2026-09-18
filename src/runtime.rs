@@ -48,7 +48,10 @@ pub fn set_stream_mock<T: 'static>(name: &str, values: Vec<T>) {
     STREAM_MOCKS.with(|m| {
         m.borrow_mut().insert(
             name.to_string(),
-            values.into_iter().map(|v| Box::new(v) as Box<dyn Any>).collect(),
+            values
+                .into_iter()
+                .map(|v| Box::new(v) as Box<dyn Any>)
+                .collect(),
         );
     });
 }
@@ -60,8 +63,9 @@ pub fn take_stream_mock<T: 'static>(name: &str) -> Option<Vec<T>> {
             values
                 .into_iter()
                 .map(|v| {
-                    *v.downcast::<T>()
-                        .unwrap_or_else(|_| panic!("elm-magic stream mock: value type mismatch for {:?}", name))
+                    *v.downcast::<T>().unwrap_or_else(|_| {
+                        panic!("elm-magic stream mock: value type mismatch for {:?}", name)
+                    })
                 })
                 .collect()
         })
@@ -95,12 +99,14 @@ pub fn set_mock1<A: Clone + 'static, Out: 'static>(name: &str, f: impl Fn(A) -> 
     let name = name.to_string();
     let mock_name = name.clone();
     let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
-                let a: &A = args
-                    .first()
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                Box::new(f(a.clone())) as Box<dyn Any>
+        let a: &A = args
+            .first()
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
             });
+        Box::new(f(a.clone())) as Box<dyn Any>
+    });
     insert_mock(&name, f);
 }
 
@@ -112,16 +118,20 @@ pub fn set_mock2<A0: Clone + 'static, A1: Clone + 'static, Out: 'static>(
     let name = name.to_string();
     let mock_name = name.clone();
     let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
-                let a0: &A0 = args
-                    .first()
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                let a1: &A1 = args
-                    .get(1)
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                Box::new(f(a0.clone(), a1.clone())) as Box<dyn Any>
+        let a0: &A0 = args
+            .first()
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
             });
+        let a1: &A1 = args
+            .get(1)
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
+            });
+        Box::new(f(a0.clone(), a1.clone())) as Box<dyn Any>
+    });
     insert_mock(&name, f);
 }
 
@@ -133,20 +143,26 @@ pub fn set_mock3<A0: Clone + 'static, A1: Clone + 'static, A2: Clone + 'static, 
     let name = name.to_string();
     let mock_name = name.clone();
     let f: MockFn = Rc::new(move |args: &[&dyn Any]| {
-                let a0: &A0 = args
-                    .first()
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                let a1: &A1 = args
-                    .get(1)
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                let a2: &A2 = args
-                    .get(2)
-                    .and_then(|v| v.downcast_ref())
-                    .unwrap_or_else(|| panic!("elm-magic mock: argument type mismatch for {:?}", mock_name));
-                Box::new(f(a0.clone(), a1.clone(), a2.clone())) as Box<dyn Any>
+        let a0: &A0 = args
+            .first()
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
             });
+        let a1: &A1 = args
+            .get(1)
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
+            });
+        let a2: &A2 = args
+            .get(2)
+            .and_then(|v| v.downcast_ref())
+            .unwrap_or_else(|| {
+                panic!("elm-magic mock: argument type mismatch for {:?}", mock_name)
+            });
+        Box::new(f(a0.clone(), a1.clone(), a2.clone())) as Box<dyn Any>
+    });
     insert_mock(&name, f);
 }
 
@@ -156,9 +172,9 @@ pub fn call_mock<Out: 'static>(name: &str, args: Vec<&dyn Any>) -> Option<Out> {
         let m = m.borrow();
         match m.get(name) {
             Some(f) => {
-                let out = f(&args)
-                    .downcast::<Out>()
-                    .unwrap_or_else(|_| panic!("elm-magic mock: return type mismatch for {:?}", name));
+                let out = f(&args).downcast::<Out>().unwrap_or_else(|_| {
+                    panic!("elm-magic mock: return type mismatch for {:?}", name)
+                });
                 Some(*out)
             }
             None => None,

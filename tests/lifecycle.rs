@@ -26,7 +26,6 @@ elm_magic::view! {
     }
 }
 
-
 #[test]
 fn on_tick_fires_when_advanced() {
     let mut app = elm_magic::mount!(Clock);

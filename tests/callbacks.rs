@@ -35,8 +35,14 @@ elm_magic::view! {
 fn callback_prop_calls_back_into_parent() {
     let mut app = elm_magic::mount_with::<List>(ListProps {
         items: Some(vec![
-            Item { id: 7, name: "seven".to_string() },
-            Item { id: 8, name: "eight".to_string() },
+            Item {
+                id: 7,
+                name: "seven".to_string(),
+            },
+            Item {
+                id: 8,
+                name: "eight".to_string(),
+            },
         ]),
         ..Default::default()
     });
@@ -60,7 +66,10 @@ elm_magic::view! {
 #[test]
 fn callback_can_use_the_incoming_value() {
     let mut app = elm_magic::mount_with::<Picker>(PickerProps {
-        items: Some(vec![Item { id: 3, name: "three".to_string() }]),
+        items: Some(vec![Item {
+            id: 3,
+            name: "three".to_string(),
+        }]),
         ..Default::default()
     });
     app.click("three");
@@ -136,4 +145,3 @@ fn nested_components_in_children() {
     app.assert_text("[inner]");
     app.assert_text("leaf");
 }
-

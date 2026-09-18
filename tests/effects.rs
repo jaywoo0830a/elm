@@ -2,7 +2,10 @@
 
 // 테스트 더블: 실제 네트워크 없이 즉시 완료되는 future
 async fn load_users() -> (String, Vec<String>) {
-    ("done".to_string(), vec!["alice".to_string(), "bob".to_string()])
+    (
+        "done".to_string(),
+        vec!["alice".to_string(), "bob".to_string()],
+    )
 }
 
 // ── 1. on_mount + `<-` (사양서 5.2) ─────────────────────────

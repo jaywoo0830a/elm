@@ -137,20 +137,20 @@ impl Palette {
     pub fn dark() -> Self {
         Self {
             colors: [
-                Color::rgb(59, 130, 246),   // primary
-                Color::rgb(255, 255, 255),  // on_primary
-                Color::rgb(39, 39, 42),     // surface
-                Color::rgb(63, 63, 70),     // surface_alt
-                Color::rgb(24, 24, 27),     // background
-                Color::rgb(228, 228, 231),  // text
-                Color::rgb(161, 161, 170),  // text_dim
-                Color::rgb(239, 68, 68),    // error
-                Color::rgb(245, 158, 11),   // warn
-                Color::rgb(34, 197, 94),    // success
-                Color::rgb(56, 189, 248),   // info
+                Color::rgb(59, 130, 246),     // primary
+                Color::rgb(255, 255, 255),    // on_primary
+                Color::rgb(39, 39, 42),       // surface
+                Color::rgb(63, 63, 70),       // surface_alt
+                Color::rgb(24, 24, 27),       // background
+                Color::rgb(228, 228, 231),    // text
+                Color::rgb(161, 161, 170),    // text_dim
+                Color::rgb(239, 68, 68),      // error
+                Color::rgb(245, 158, 11),     // warn
+                Color::rgb(34, 197, 94),      // success
+                Color::rgb(56, 189, 248),     // info
                 Color::rgba(82, 82, 91, 180), // border
-                Color::rgba(0, 0, 0, 160),  // shadow
-                Color::rgba(0, 0, 0, 120),  // overlay
+                Color::rgba(0, 0, 0, 160),    // shadow
+                Color::rgba(0, 0, 0, 120),    // overlay
             ],
         }
     }
@@ -159,20 +159,20 @@ impl Palette {
     pub fn light() -> Self {
         Self {
             colors: [
-                Color::rgb(37, 99, 235),      // primary
-                Color::rgb(255, 255, 255),    // on_primary
-                Color::rgb(255, 255, 255),    // surface
-                Color::rgb(244, 244, 245),    // surface_alt
-                Color::rgb(250, 250, 250),    // background
-                Color::rgb(24, 24, 27),       // text
-                Color::rgb(113, 113, 122),    // text_dim
-                Color::rgb(220, 38, 38),      // error
-                Color::rgb(217, 119, 6),      // warn
-                Color::rgb(22, 163, 74),      // success
-                Color::rgb(2, 132, 199),      // info
+                Color::rgb(37, 99, 235),         // primary
+                Color::rgb(255, 255, 255),       // on_primary
+                Color::rgb(255, 255, 255),       // surface
+                Color::rgb(244, 244, 245),       // surface_alt
+                Color::rgb(250, 250, 250),       // background
+                Color::rgb(24, 24, 27),          // text
+                Color::rgb(113, 113, 122),       // text_dim
+                Color::rgb(220, 38, 38),         // error
+                Color::rgb(217, 119, 6),         // warn
+                Color::rgb(22, 163, 74),         // success
+                Color::rgb(2, 132, 199),         // info
                 Color::rgba(212, 212, 216, 255), // border
-                Color::rgba(0, 0, 0, 40),     // shadow
-                Color::rgba(0, 0, 0, 60),     // overlay
+                Color::rgba(0, 0, 0, 40),        // shadow
+                Color::rgba(0, 0, 0, 60),        // overlay
             ],
         }
     }
@@ -192,17 +192,32 @@ pub struct Edges {
 impl Edges {
     /// 네 방향 같은 값.
     pub const fn splat(value: f32) -> Self {
-        Self { top: value, right: value, bottom: value, left: value }
+        Self {
+            top: value,
+            right: value,
+            bottom: value,
+            left: value,
+        }
     }
 
     /// `상하 좌우` (CSS 2값 숏핸드).
     pub const fn symmetric(vertical: f32, horizontal: f32) -> Self {
-        Self { top: vertical, right: horizontal, bottom: vertical, left: horizontal }
+        Self {
+            top: vertical,
+            right: horizontal,
+            bottom: vertical,
+            left: horizontal,
+        }
     }
 
     /// `top right bottom left` (CSS 4값 숏핸드).
     pub const fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
-        Self { top, right, bottom, left }
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
     }
 
     /// 가로 합.
@@ -396,10 +411,30 @@ impl Shadow {
     pub fn from_values(values: &[f32]) -> Option<Shadow> {
         let g = |i: usize| values.get(i).copied().unwrap_or(0.0);
         match values.len() {
-            1 => Some(Shadow { dx: 0.0, dy: g(0), blur: g(1), spread: 0.0 }),
-            2 => Some(Shadow { dx: g(0), dy: g(1), blur: 0.0, spread: 0.0 }),
-            3 => Some(Shadow { dx: g(0), dy: g(1), blur: g(2), spread: 0.0 }),
-            4 => Some(Shadow { dx: g(0), dy: g(1), blur: g(2), spread: g(3) }),
+            1 => Some(Shadow {
+                dx: 0.0,
+                dy: g(0),
+                blur: g(1),
+                spread: 0.0,
+            }),
+            2 => Some(Shadow {
+                dx: g(0),
+                dy: g(1),
+                blur: 0.0,
+                spread: 0.0,
+            }),
+            3 => Some(Shadow {
+                dx: g(0),
+                dy: g(1),
+                blur: g(2),
+                spread: 0.0,
+            }),
+            4 => Some(Shadow {
+                dx: g(0),
+                dy: g(1),
+                blur: g(2),
+                spread: g(3),
+            }),
             _ => None,
         }
     }
@@ -429,11 +464,21 @@ pub struct State {
 
 impl State {
     /// 전부 꺼진 상태 (헤드리스 기본).
-    pub const NONE: State = State { hovered: false, active: false, focused: false, disabled: false };
+    pub const NONE: State = State {
+        hovered: false,
+        active: false,
+        focused: false,
+        disabled: false,
+    };
 
     /// 어댑터용 생성기.
     pub const fn new(hovered: bool, active: bool, focused: bool, disabled: bool) -> State {
-        State { hovered, active, focused, disabled }
+        State {
+            hovered,
+            active,
+            focused,
+            disabled,
+        }
     }
 }
 
@@ -562,7 +607,9 @@ impl<'a> Node<'a> {
     /// 클래스를 가졌는가 (점은 여도 안 붙여도 같다).
     pub fn has_class(&self, name: &str) -> bool {
         let bare = name.strip_prefix('.').unwrap_or(name);
-        self.classes.iter().any(|c| c.strip_prefix('.').unwrap_or(c) == bare)
+        self.classes
+            .iter()
+            .any(|c| c.strip_prefix('.').unwrap_or(c) == bare)
     }
 }
 
@@ -602,7 +649,9 @@ impl Selector {
             } else if !seq.is_empty() {
                 comb = Comb::Descendant;
             }
-            let end = rest.find(|c: char| c == '>' || c.is_whitespace()).unwrap_or(rest.len());
+            let end = rest
+                .find(|c: char| c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
             let (part, mask) = parse_compound(&rest[..end])?;
             state |= mask;
             seq.push((comb, part));
@@ -947,10 +996,40 @@ impl ResolvedStyle {
     /// 한 터의 선언을 다 — **나중에 적용된 것이 이긴다** (스케이드).
     pub fn apply(&mut self, spec: &StyleSpec, palette: &Palette) {
         take!(
-            self, spec, gap, row_gap, column_gap, padding, margin, width, height, min_width,
-            min_height, max_width, max_height, align, justify, wrap, display_none, hidden,
-            border_width, radius, shadow, opacity, font_size, line_height, letter_spacing, bold,
-            italic, mono, strike, underline, text_align, transform, truncate, cursor,
+            self,
+            spec,
+            gap,
+            row_gap,
+            column_gap,
+            padding,
+            margin,
+            width,
+            height,
+            min_width,
+            min_height,
+            max_width,
+            max_height,
+            align,
+            justify,
+            wrap,
+            display_none,
+            hidden,
+            border_width,
+            radius,
+            shadow,
+            opacity,
+            font_size,
+            line_height,
+            letter_spacing,
+            bold,
+            italic,
+            mono,
+            strike,
+            underline,
+            text_align,
+            transform,
+            truncate,
+            cursor,
         );
         // 색만 팔레트로 확정한다
         if let Some(t) = spec.bg {
@@ -979,8 +1058,19 @@ impl ResolvedStyle {
     /// 상속되지 않는 것: 여백·크기·배경·테두리·그림자·정렬·커서 등.
     pub fn inherit_from(&mut self, parent: &ResolvedStyle) {
         take!(
-            self, parent, color, font_size, line_height, letter_spacing, bold, italic, mono,
-            strike, underline, text_align, transform,
+            self,
+            parent,
+            color,
+            font_size,
+            line_height,
+            letter_spacing,
+            bold,
+            italic,
+            mono,
+            strike,
+            underline,
+            text_align,
+            transform,
         );
     }
 
@@ -1001,7 +1091,8 @@ impl ResolvedStyle {
 
     /// 그림자를 플랫폼 값으로 옮길 때 쓸 색 (기본: 팔레트 `shadow`).
     pub fn shadow_color_or(&self, palette: &Palette) -> Color {
-        self.shadow_color.unwrap_or_else(|| palette.get(Token::Shadow))
+        self.shadow_color
+            .unwrap_or_else(|| palette.get(Token::Shadow))
     }
 }
 
@@ -1052,7 +1143,10 @@ impl StyleProps {
         macro_rules! flag {
             ($key:expr, $v:expr) => {
                 if let Some(v) = $v {
-                    out.push(($key.to_string(), if v { "true" } else { "false" }.to_string()));
+                    out.push((
+                        $key.to_string(),
+                        if v { "true" } else { "false" }.to_string(),
+                    ));
                 }
             };
         }
@@ -1084,7 +1178,10 @@ impl StyleProps {
         }
         flag!("wrap", s.wrap);
         if let Some(v) = s.display_none {
-            out.push(("display".into(), if v { "none" } else { "flex" }.to_string()));
+            out.push((
+                "display".into(),
+                if v { "none" } else { "flex" }.to_string(),
+            ));
         }
         if let Some(v) = s.hidden {
             out.push((
@@ -1109,10 +1206,16 @@ impl StyleProps {
         num!("line-height", s.line_height);
         num!("letter-spacing", s.letter_spacing);
         if let Some(v) = s.bold {
-            out.push(("weight".into(), if v { "bold" } else { "normal" }.to_string()));
+            out.push((
+                "weight".into(),
+                if v { "bold" } else { "normal" }.to_string(),
+            ));
         }
         if let Some(v) = s.italic {
-            out.push(("font-style".into(), if v { "italic" } else { "normal" }.to_string()));
+            out.push((
+                "font-style".into(),
+                if v { "italic" } else { "normal" }.to_string(),
+            ));
         }
         if let Some(v) = s.mono {
             out.push((
@@ -1147,7 +1250,10 @@ impl StyleProps {
 
     /// 선언 텍스트 조회 — `get("gap") == Some("8")`.
     pub fn get(&self, key: &str) -> Option<String> {
-        self.pairs().into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.pairs()
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
     }
 }
 
@@ -1211,7 +1317,10 @@ pub fn register(entries: Vec<(&str, StyleSpec)>) {
             };
             let order = reg.rules.len();
             reg.rules.push(Rule {
-                props: StyleProps { selector: one.to_string(), spec },
+                props: StyleProps {
+                    selector: one.to_string(),
+                    spec,
+                },
                 selector,
                 order,
             });
@@ -1250,7 +1359,13 @@ pub fn len() -> usize {
 
 /// 등록된 렉터 목록 (등록 순서) — `ELM_MAGIC_DUMP`/디버깅용.
 pub fn selectors() -> Vec<String> {
-    registry().lock().unwrap().rules.iter().map(|r| r.props.selector.clone()).collect()
+    registry()
+        .lock()
+        .unwrap()
+        .rules
+        .iter()
+        .map(|r| r.props.selector.clone())
+        .collect()
 }
 
 /// 매칭 경로로 **최종 스타일**을 만든다 (사양서 6.1~6.3).
@@ -1269,8 +1384,11 @@ pub fn resolve_nodes(
         out.inherit_from(parent);
     }
     let reg = registry().lock().unwrap();
-    let mut hits: Vec<&Rule> =
-        reg.rules.iter().filter(|r| r.selector.matches(path, state)).collect();
+    let mut hits: Vec<&Rule> = reg
+        .rules
+        .iter()
+        .filter(|r| r.selector.matches(path, state))
+        .collect();
     hits.sort_by_key(|r| (r.selector.specificity(), r.order));
     for rule in hits {
         out.apply(&rule.props.spec, palette);
@@ -1316,13 +1434,17 @@ impl IntoClasses for Vec<String> {
 
 impl IntoClasses for Vec<&str> {
     fn into_classes(self) -> Vec<String> {
-        self.into_iter().flat_map(IntoClasses::into_classes).collect()
+        self.into_iter()
+            .flat_map(IntoClasses::into_classes)
+            .collect()
     }
 }
 
 impl<const N: usize> IntoClasses for [&str; N] {
     fn into_classes(self) -> Vec<String> {
-        self.into_iter().flat_map(IntoClasses::into_classes).collect()
+        self.into_iter()
+            .flat_map(IntoClasses::into_classes)
+            .collect()
     }
 }
 

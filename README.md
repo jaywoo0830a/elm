@@ -3,8 +3,8 @@
 **"상태는 변수, 이벤트는 대입, 화면은 함수 본문, 효과는 `<-`, 플랫폼은 인자."**
 
 Rust 타입 시스템은 그대로 두고, 매크로로 문법을 JS/JSX처럼 위장한 초경량 순수 함수형
-UI 라이브러리. 기본 빌드의 외부 의존성은 **0**이다
-(`cargo tree -p elm-magic -e normal` → 매크로 크레이트뿐).
+UI 라이브러리. **런타임 의존성은 0**이다 — `cargo tree -p elm-magic -e normal`은
+매크로 크레이트와 컴파일타임 전용 `enum_dispatch`뿐이고, 실행 바이너리에는 남지 않는다.
 
 ## 설치
 
@@ -70,7 +70,49 @@ fn counter_ui(ui: &mut egui::Ui, ctx: &mut Ctx) {
 - **구독**: `on_message` / `on_event` / `on_net_change` / `on_navigate` / `on_unmount`
 - **컴포넌트**: 콜백 prop(`on_select={..}`), children, `mount_with!`
 - **테스트**: `flush` / `advance` / `pump` / `click` / `type_` / `press_key` / `render_tree`
+- **위젯 프로토콜 (0.7)**: `Widget` 트레이트 + `enum_dispatch` — `role` / `label` /
+  `is_interactive` / `is_disabled` / 핸들러 접근을 variant 매칭 없이
+- **셀렉터 (0.7)**: `click_role` / `sel!` / `query` / `exists` / `a11y_tree`
 - **선택 기능**: `--features serde` → `Element: Serialize` (뷰 스냅샷)
+
+## 위젯 프로토콜 (0.7)
+
+`Element`는 이제 **위젯 구조체들의 enum**이고, `enum_dispatch`가 `Widget` 트레이트의
+메서드를 각 변형(`TextEl`, `ButtonEl`, `ColEl`, …)으로 정적 디스패치한다.
+소비 측은 variant를 몰라도 된다 — 스크린리더·테스트·어댑터가 같은 질문을 던진다.
+
+```rust
+use elm_magic::prelude::*;
+use elm_magic::sel;
+
+elm_magic::view! {
+    fn Counter(n = 0) {
+        <Row>
+            <Button on_click={n -= 1}>"-"</Button>
+            "Count: {n}"
+            <Button on_click={n += 1}>"+"</Button>
+        </Row>
+    }
+}
+
+#[test]
+fn role_selectors_and_a11y() {
+    let mut app = elm_magic::mount!(Counter);
+
+    app.click_role(Role::Button, "+");        // role + 라벨로 클릭
+    app.click_sel(&sel!(role Button, "-"));   // 셀렉터 슈가
+    app.expect_text("Count: 0");
+
+    assert!(app.exists(&sel!(tag button)));   // 태그로 찾기
+    assert!(app.has_role(Role::Group));       // Row는 group
+
+    println!("{}", app.a11y_tree());          // group / button "…"
+}
+```
+
+트리 순회·접근성·이벤트 탐색이 모두 `Widget`의 메서드(`children`, `role`, `on_click`,
+`on_value_change`, `on_bool_change`, `raw_fn`, `dump` …)로 통일돼, 새 위젯을 추가할 때
+6곳의 `match` 대신 구현 하나만 채우면 된다.
 
 ## 문서
 

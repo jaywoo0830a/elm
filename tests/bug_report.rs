@@ -238,7 +238,9 @@ fn hyphenated_class_name_is_registered() {
     );
     assert!(elm_magic::style::lookup_class("panel__item--active").is_some());
     assert_eq!(
-        elm_magic::style::lookup_class("my-class").unwrap().selector(),
+        elm_magic::style::lookup_class("my-class")
+            .unwrap()
+            .selector(),
         ".my-class"
     );
 }

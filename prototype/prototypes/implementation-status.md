@@ -141,16 +141,17 @@ rustc --edition 2021 --test --emit=metadata \
 
 ---
 
-## 2.8 의존성 정책 — `serde`만 선택적, 나머지 3종은 넣지 않음
+## 2.8 의존성 정책 — `serde` 선택, `enum_dispatch`는 0.7에서 채택
 
 `serde` / `thiserror` / `enum_dispatch` / `tokio` 도입을 검토한 기록.
-**기본 빌드의 외부 의존성은 0**을 유지한다 (`cargo tree -p elm-magic -e normal` → `elm-magic-macros`뿐).
+**런타임 외부 의존성은 0**을 유지한다 (`cargo tree -p elm-magic -e normal` →
+`elm-magic-macros` + `enum_dispatch`뿐이고 둘 다 실행 바이너리에 남지 않는다).
 
 | 라이브러리 | 판단 | 근거 (코드 실측) |
 |---|---|---|
 | `serde` | ✅ **선택 기능** | 사양서 8.3·부록의 "뷰는 직렬화 가능"(`Element: Serialize`). `[features] serde = ["dep:serde"]` + `#[cfg_attr(feature = "serde", derive(serde::Serialize))]`. 핸들러/`<Raw>`는 `#[serde(skip)]` → **구조·텍스트·클래스만** 직렬화. 기본 그래프는 그대로 0 |
 | `thiserror` | ❌ | `src/`+매크로에 `panic!` **54곳**, 공개 API는 panic 기반(매크로 사용 오류를 한국어 메시지로 즉시 실패). 반환형 `Result`/에러 타입이 없어 `#[derive(Error)]`를 넣어도 `panic!("{}", e)` 래핑만 늘어난다 (코드 감소 0) |
-| `enum_dispatch` | ❌ | `Element`는 데이터 enum(패턴 매칭: `element.rs::collect_texts`, `testing.rs::dump`, egui `render_el`)이고 핸들러는 **클로저**(고유 타입)라 위임할 트레이트 대상이 없다. variant를 구조체로 바꾸면 3개 크레이트의 매칭을 전부 갈아엎어야 함 — 단순화가 아니라 비용 |
+| `enum_dispatch` | ✅ **0.7에서 채택** | 0.6까지는 `Element`가 데이터 enum이고 핸들러가 클로저라 위임 대상이 없다고 판단했다. 0.7에서 `Element`를 **위젯 구조체들의 enum**(`Text(TextEl)`, …)으로 바꾸고 `Widget` 트레이트를 두니, 트리 순회·접근성·테스트 셀렉터·이벤트 탐색이 **variant 매칭 없이** 한 곳으로 모였다. 절차적 매크로라 런타임 비용 0 — egui 어댑터의 "그리기"만 visitor로 남는다 |
 | `tokio` | ❌ | `Arena::spawn` 제약은 `F: Future + 'static`(**`Send` 없음**)이고 테스트는 동기 `flush` 모델. `tokio::spawn`은 `Send`를 요구하므로 `Rc` 캡처 future가 깨진다. `runtime::block_on`의 noop-waker 스핀은 진짜 I/O future에 부적합하지만, 그건 **설계 결정**(headless = 즉시 완료 future)이지 라이브러리 교체 문제가 아니다 |
 
 ### `serde` 사용법 (사양서 8.3)
@@ -261,6 +262,56 @@ FreeDF 리포트(2026-09-17)의 BEM 항목. **재현 테스트 먼저**(`tests/b
 cargo test                            # 138  (0.6.0: 135)
 cargo test --workspace --all-features # 142  (0.6.0: 139)
 ```
+
+---
+
+## 2.11 v0.7 — Widget Protocol ✅ (0.7.0, `enum_dispatch`)
+
+`Element`를 **위젯 구조체들의 enum**으로 전환하고, `enum_dispatch`가 `Widget`
+트레이트를 각 variant로 정적 디스패치한다. 0.6까지 흩어져 있던 variant 매칭을
+한 곳으로 모은 급진적 리팩터다.
+
+### 무엇이 바뀌었나
+
+| 0.6 (variant 매칭) | 0.7 (프로토콜 질의) |
+|---|---|
+| `element.rs::collect_texts` / `children` / `tag` / `class` | `Widget::texts_into` / `children` / `tag` / `class` |
+| `testing.rs::dump` / `find_button` / `find_input_change` / `find_check` | `Widget::dump` + `role` / `label` / `on_click` / `on_value_change` / `on_bool_change` |
+| `raw.rs::invoke` | `Widget::raw_fn` |
+| egui `is_disabled` | `Widget::is_disabled` |
+| (없음) | `Widget::role` / `is_interactive` → 접근성·셀렉터 |
+
+백엔드의 "그리기"(`render_el`)만 여전히 variant를 매칭한다 — 본질적으로
+백엔드별 작업이라 visitor 패턴이 맞다.
+
+### 새로 생긴 기능·문법
+
+- **`Widget` 트레이트 + `#[enum_dispatch(Widget)] enum Element`** (`src/widget.rs`).
+  위젯 구조체: `TextEl` `StrongEl` `ColEl` `RowEl` `ButtonEl` `InputEl` `TextAreaEl`
+  `CheckEl` `TabEl` `ThEl` `TdEl` `BannerEl` `SpinnerEl` `DividerEl` `ProgressEl`
+  `ModalEl` `RawEl` `FragmentEl`.
+- **`Role`** (접근성 어휘) + `label` / `is_interactive` / `is_disabled`.
+- **셀렉터 슈가 `sel!`**:
+  `sel!(role Button, "+")` / `sel!(role Button)` / `sel!(tag input)` /
+  `sel!(class card)` / `sel!(text "hi")`.
+- **`TestApp` 확장**: `click_role`, `click_sel`, `query`, `exists`,
+  `a11y_tree`, `roles`, `has_role`.
+- **매크로**: `ui!` / `view!`가 tuple variant를 생성한다 (사용자 문법 무변화).
+
+### 검증
+
+```
+cargo test --workspace               # 152  (0.6.1: 138)
+cargo test --workspace --all-features # 156  (0.6.1: 142)
+```
+
+- `tests/widget_protocol.rs` 신규 **14개** — 프로토콜 질의 / `click_role` /
+  `sel!` / `Selector` 조합(role·tag·class·label·subtree) / 접근성 트리 /
+  트레이트 기반 핸들러 접근 / 컨테이너 상호작용.
+- 기존 138개 테스트의 **동작은 그대로**다 — variant를 직접 매칭하던
+  `tests/counter.rs` 한 곳만 새 형태(`Element::Col(col)`)로 바꿨다.
+- `--features serde` 스냅샷도 그대로 통과 — JSON 표현(`{"Button": {..}}`)이
+  struct-variant 시절과 동일하다.
 
 ---
 

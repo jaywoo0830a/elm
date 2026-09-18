@@ -39,9 +39,12 @@ mod element;
 pub mod platform;
 pub mod raw;
 pub mod runtime;
-pub mod style;
 mod state;
+pub mod style;
 pub mod testing;
+/// v0.7 Widget Protocol — `Element`는 위젯 구조체들의 enum이고
+/// `enum_dispatch`가 `Widget` 메서드를 각 variant로 정적 디스패치한다.
+pub mod widget;
 
 /// Register an effect mock on a mounted app (사양서 8.2 — `.mock()` 슈가).
 ///
@@ -74,8 +77,55 @@ macro_rules! mock_stream {
     };
 }
 
+/// 셀렉터 슈가 (v0.7) — role/tag/class/text로 요소를 찾는다.
+///
+/// `Element`의 variant를 몰라도 되고, 라벨 텍스트가 바뀌어도 role이 같으면
+/// 테스트가 견딘다.
+///
+/// ```ignore
+/// use elm_magic::sel;
+/// app.click_sel(&sel!(role Button, "+"));   // role + 라벨
+/// app.click_sel(&sel!(role Button));        // 첫 버튼
+/// assert!(app.exists(&sel!(class card)));
+/// assert!(app.exists(&sel!(tag input)));
+/// ```
+#[macro_export]
+macro_rules! sel {
+    (role $r:ident, $label:expr) => {
+        $crate::testing::Selector::role($crate::widget::Role::$r).and_label($label)
+    };
+    (role $r:ident) => {
+        $crate::testing::Selector::role($crate::widget::Role::$r)
+    };
+    // `sel!(tag button)` — 식별자를 문자열로
+    (tag $t:ident) => {
+        $crate::testing::Selector::tag(::std::stringify!($t))
+    };
+    (tag $t:literal) => {
+        $crate::testing::Selector::tag($t)
+    };
+    // `sel!(class card)` — 식별자를 문자열로
+    (class $c:ident) => {
+        $crate::testing::Selector::class(::std::stringify!($c))
+    };
+    (class $c:literal) => {
+        $crate::testing::Selector::class($c)
+    };
+    (text $t:expr) => {
+        $crate::testing::Selector::label($t)
+    };
+}
+
 pub use element::{Callback, Element, IntoElement, IntoElements};
 pub use state::{Arena, Ctx, FrameTail, State};
+
+/// 위젯 구조체들 — `Element`의 각 variant가 감싸는 타입.
+pub use widget::{
+    BannerEl, ButtonEl, CheckEl, ColEl, DividerEl, FragmentEl, InputEl, ModalEl, ProgressEl, RawEl,
+    RowEl, SpinnerEl, StrongEl, TabEl, TdEl, TextAreaEl, TextEl, ThEl,
+};
+/// v0.7 Widget Protocol — 위젯 트레이트와 접근성 role을 공개한다.
+pub use widget::{Role, Widget};
 
 /// 이벤트/콜백으로 들어온 값(`_`)을 복제한다.
 ///
@@ -138,16 +188,13 @@ pub trait Component {
 /// Re-exported procedural macros.
 pub use elm_magic_macros::{css, store, store_fn, ui, view};
 
+pub use platform::{Headless, Platform};
 /// Mount a component headlessly (no renderer, no runtime) for tests.
 pub use testing::{mount, mount_with};
-pub use platform::{Headless, Platform};
 
 /// Entry point (사양서 7.1): the platform is an argument, the component
 /// never knows it.
-pub fn run<P: platform::Platform, C: Component>(
-    platform: P,
-    component: C,
-) -> P::Session<C>
+pub fn run<P: platform::Platform, C: Component>(platform: P, component: C) -> P::Session<C>
 where
     C::Props: Default,
 {
@@ -156,12 +203,15 @@ where
 
 pub mod prelude {
     pub use crate::element::{Callback, Element, IntoElement, IntoElements};
-    pub use crate::state::{Arena, Ctx, FrameTail, State};
-    pub use crate::testing::{mount, mount_with, TestApp};
     pub use crate::platform::{Headless, Platform};
-    pub use crate::{clone_value, frame, into_element, key_of, mock, mock_stream, nav_take, run};
-    pub use crate::Component;
+    pub use crate::state::{Arena, Ctx, FrameTail, State};
     pub use crate::style;
+    pub use crate::testing::{mount, mount_with, Selector, TestApp};
+    pub use crate::widget::{Role, Widget};
+    pub use crate::Component;
+    pub use crate::{
+        clone_value, frame, into_element, key_of, mock, mock_stream, nav_take, run, sel,
+    };
     pub use elm_magic_macros::{css, store, store_fn, ui, view};
 }
 
@@ -175,4 +225,3 @@ macro_rules! mount {
         $crate::testing::mount_with::<$t>($props)
     };
 }
-

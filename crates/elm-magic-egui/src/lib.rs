@@ -25,7 +25,11 @@
 use elm_magic::style::{
     Align as StyleAlign, Color, Cursor, Edges, Len, Palette, ResolvedStyle, State, Token,
 };
-use elm_magic::{Arena, Element};
+use elm_magic::Arena;
+use elm_magic::{
+    BannerEl, ButtonEl, CheckEl, ColEl, DividerEl, Element, FragmentEl, InputEl, ModalEl,
+    ProgressEl, RawEl, RowEl, SpinnerEl, StrongEl, TabEl, TdEl, TextAreaEl, TextEl, ThEl, Widget,
+};
 
 /// 한 패스가 만든 위젯 정보.
 pub struct Pass {
@@ -66,7 +70,11 @@ pub fn render_with_palette(
     palette: &Palette,
 ) -> Pass {
     let mut walk = Walk {
-        pass: Pass { buttons: Vec::new(), checks: Vec::new(), styles: Vec::new() },
+        pass: Pass {
+            buttons: Vec::new(),
+            checks: Vec::new(),
+            styles: Vec::new(),
+        },
         ancestors: Vec::new(),
         inherited: Vec::new(),
         node: 0,
@@ -112,7 +120,9 @@ fn read_state(ctx: &egui::Context, id: egui::Id, disabled: bool) -> State {
     let Some(mem) = ctx.memory(|m| m.data.get_temp::<NodeMemory>(id)) else {
         return State::new(false, false, false, disabled);
     };
-    let hovered = ctx.pointer_hover_pos().is_some_and(|p| mem.rect.contains(p));
+    let hovered = ctx
+        .pointer_hover_pos()
+        .is_some_and(|p| mem.rect.contains(p));
     let active = hovered && ctx.input(|i| i.pointer.any_down());
     State::new(hovered, active, mem.focused, disabled)
 }
@@ -195,12 +205,17 @@ fn frame_of(style: &ResolvedStyle, palette: &Palette) -> egui::Frame {
         frame = frame.corner_radius(radius(r));
     }
     if let Some(width) = style.border_width {
-        let color = style.border_color.unwrap_or_else(|| palette.get(Token::Border));
+        let color = style
+            .border_color
+            .unwrap_or_else(|| palette.get(Token::Border));
         frame = frame.stroke(egui::Stroke::new(width, color32(color)));
     }
     if let Some(s) = style.shadow {
         frame = frame.shadow(egui::Shadow {
-            offset: [s.dx.clamp(-128.0, 127.0) as i8, s.dy.clamp(-128.0, 127.0) as i8],
+            offset: [
+                s.dx.clamp(-128.0, 127.0) as i8,
+                s.dy.clamp(-128.0, 127.0) as i8,
+            ],
             blur: s.blur.clamp(0.0, 255.0) as u8,
             spread: s.spread.clamp(0.0, 255.0) as u8,
             color: color32(style.shadow_color_or(palette)),
@@ -336,13 +351,19 @@ struct Drawn {
 impl Drawn {
     /// 응답에서 (소유권 없이).
     fn of(resp: &egui::Response) -> Self {
-        Drawn { rect: resp.rect, focused: resp.has_focus() }
+        Drawn {
+            rect: resp.rect,
+            focused: resp.has_focus(),
+        }
     }
 }
 
 impl From<egui::Response> for Drawn {
     fn from(resp: egui::Response) -> Self {
-        Drawn { rect: resp.rect, focused: resp.has_focus() }
+        Drawn {
+            rect: resp.rect,
+            focused: resp.has_focus(),
+        }
     }
 }
 
@@ -357,12 +378,9 @@ fn banner_token(kind: &str) -> Token {
     }
 }
 
-/// `:disabled` 상태를 리먼트 prop에서 얻는다.
+/// `:disabled` 상태 — v0.7부터 `Widget::is_disabled`가 dispatch한다.
 fn is_disabled(el: &Element) -> bool {
-    match el {
-        Element::Button { disabled, .. } => *disabled,
-        _ => false,
-    }
+    el.is_disabled()
 }
 
 /// 노드 하나를 그린다 — 스타일 해석(조상·상속·상태) → egui 반영 → 자식 재귀.
@@ -378,7 +396,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
         return;
     }
     // `<Banner>`는 을 안 정하면 종류별 기본색을 쓴다
-    if let Element::Banner { kind, .. } = el {
+    if let Element::Banner(BannerEl { kind, .. }) = el {
         if style.color.is_none() {
             style.color = Some(palette.get(banner_token(kind)));
         }
@@ -391,24 +409,27 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
     walk.inherited.push(style);
 
     // 응답을 내지 않는 태그(`Raw`/`Fragment`)는 상태를 기록하지 않는다
-    let mut drawn = Drawn { rect: egui::Rect::ZERO, focused: false };
+    let mut drawn = Drawn {
+        rect: egui::Rect::ZERO,
+        focused: false,
+    };
     match el {
-        Element::Text { text, .. } => {
+        Element::Text(TextEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Strong { text, .. } => {
+        Element::Strong(StrongEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, true);
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Banner { text, .. } => {
+        Element::Banner(BannerEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Spinner { .. } => {
+        Element::Spinner(SpinnerEl { .. }) => {
             let mut spinner = egui::Spinner::new();
             let size = match style.width {
                 Some(Len::Px(v)) => Some(v),
@@ -424,12 +445,12 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Divider { .. } => {
+        Element::Divider(DividerEl { .. }) => {
             let resp = ui.separator();
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Progress { value, .. } => {
+        Element::Progress(ProgressEl { value, .. }) => {
             let mut bar = egui::ProgressBar::new(*value as f32);
             if let Some(c) = style.fill {
                 bar = bar.fill(color32(c));
@@ -448,13 +469,30 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Col { children, on_click, .. } => {
+        Element::Col(ColEl {
+            children, on_click, ..
+        }) => {
             drawn = container(walk, ui, arena, &style, children, true, on_click.as_deref());
         }
-        Element::Row { children, on_click, .. } => {
-            drawn = container(walk, ui, arena, &style, children, false, on_click.as_deref());
+        Element::Row(RowEl {
+            children, on_click, ..
+        }) => {
+            drawn = container(
+                walk,
+                ui,
+                arena,
+                &style,
+                children,
+                false,
+                on_click.as_deref(),
+            );
         }
-        Element::Button { text, disabled, on_click, .. } => {
+        Element::Button(ButtonEl {
+            text,
+            disabled,
+            on_click,
+            ..
+        }) => {
             let mut button = egui::Button::new(rich(text, &style, false));
             if let Some(bg) = style.bg {
                 button = button.fill(color32(bg));
@@ -466,7 +504,9 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                 button = button.min_size(size);
             }
             if let Some(width) = style.border_width {
-                let c = style.border_color.unwrap_or_else(|| palette.get(Token::Border));
+                let c = style
+                    .border_color
+                    .unwrap_or_else(|| palette.get(Token::Border));
                 button = button.stroke(egui::Stroke::new(width, color32(c)));
             }
             let resp = ui.add_enabled(!disabled, button);
@@ -480,7 +520,12 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             drawn = Drawn::of(&resp);
             walk.pass.buttons.push((text.clone(), resp));
         }
-        Element::Tab { text, active, on_click, .. } => {
+        Element::Tab(TabEl {
+            text,
+            active,
+            on_click,
+            ..
+        }) => {
             let resp = ui.selectable_label(*active, rich(text, &style, false));
             let resp = decorate(ui, resp, &style);
             if resp.clicked() {
@@ -491,7 +536,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             drawn = Drawn::of(&resp);
             walk.pass.buttons.push((text.clone(), resp));
         }
-        Element::Th { text, on_click, .. } => {
+        Element::Th(ThEl { text, on_click, .. }) => {
             let mut button = egui::Button::new(rich(text, &style, true));
             if let Some(bg) = style.bg {
                 button = button.fill(color32(bg));
@@ -510,13 +555,18 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             drawn = Drawn::of(&resp);
             walk.pass.buttons.push((text.clone(), resp));
         }
-        Element::Td { text, .. } => {
+        Element::Td(TdEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
 
-Element::Input { value, on_change, on_enter, .. } => {
+        Element::Input(InputEl {
+            value,
+            on_change,
+            on_enter,
+            ..
+        }) => {
             let mut v = value.clone();
             let resp = ui.text_edit_singleline(&mut v);
             if resp.changed() {
@@ -531,7 +581,12 @@ Element::Input { value, on_change, on_enter, .. } => {
             }
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::TextArea { value, on_change, on_enter, .. } => {
+        Element::TextArea(TextAreaEl {
+            value,
+            on_change,
+            on_enter,
+            ..
+        }) => {
             let mut v = value.clone();
             let resp = ui.text_edit_multiline(&mut v);
             if resp.changed() {
@@ -546,7 +601,12 @@ Element::Input { value, on_change, on_enter, .. } => {
             }
             drawn = Drawn::from(decorate(ui, resp, &style));
         }
-        Element::Check { checked, label, on_change, .. } => {
+        Element::Check(CheckEl {
+            checked,
+            label,
+            on_change,
+            ..
+        }) => {
             let mut value = *checked;
             let resp = ui.checkbox(&mut value, rich(label, &style, false));
             if resp.changed() {
@@ -558,9 +618,18 @@ Element::Input { value, on_change, on_enter, .. } => {
             drawn = Drawn::of(&resp);
             walk.pass.checks.push((label.clone(), resp));
         }
-        Element::Modal { title, on_close, children, .. } => {
+        Element::Modal(ModalEl {
+            title,
+            on_close,
+            children,
+            ..
+        }) => {
             let mut open = true;
-            let heading = if title.is_empty() { "modal" } else { title.as_str() };
+            let heading = if title.is_empty() {
+                "modal"
+            } else {
+                title.as_str()
+            };
             egui::Window::new(heading)
                 .frame(frame_of(&style, palette))
                 .open(&mut open)
@@ -576,11 +645,11 @@ Element::Input { value, on_change, on_enter, .. } => {
                 }
             }
         }
-        Element::Raw { widget, .. } => {
+        Element::Raw(RawEl { widget, .. }) => {
             // 유일한 탈출구 (사양서 7.3): 어댑터 핸들을 그대로 넘긴다
             widget(ui);
         }
-        Element::Fragment { children } => {
+        Element::Fragment(FragmentEl { children }) => {
             // 레이아웃 없는 음 — 순서대로 그린다
             for c in children {
                 render_el(walk, ui, c, arena);
@@ -604,7 +673,11 @@ fn container<'a>(
     on_click: Option<&dyn Fn(&mut Arena)>,
 ) -> Drawn {
     let palette = walk.palette;
-    let gap = if vertical { style.row_gap() } else { style.column_gap() };
+    let gap = if vertical {
+        style.row_gap()
+    } else {
+        style.column_gap()
+    };
     let inner = frame_of(style, palette).show(ui, |ui| {
         if let Some(gap) = gap {
             if vertical {

@@ -20,7 +20,10 @@ fn headless_platform_runs_and_returns_session() {
 #[test]
 fn prelude_exposes_platform() {
     // 사용자 진입점 스타일: use elm_magic::prelude::*;
-    let mut app = { use elm_magic::prelude::*; run(Headless, Counter) };
+    let mut app = {
+        use elm_magic::prelude::*;
+        run(Headless, Counter)
+    };
     app.click("+");
     app.click("+");
     app.expect_text("Count: 2");

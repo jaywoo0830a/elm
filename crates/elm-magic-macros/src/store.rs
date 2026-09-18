@@ -61,7 +61,10 @@ pub fn expand_fn(input: TokenStream) -> TokenStream {
     let mut out: Vec<TokenTree> = Vec::new();
     let mut i = 0;
     if matches!(toks.get(i), Some(TokenTree::Ident(id)) if id.to_string() != "struct") {
-        out.push(TokenTree::Ident(proc_macro::Ident::new("struct", toks[i].span())));
+        out.push(TokenTree::Ident(proc_macro::Ident::new(
+            "struct",
+            toks[i].span(),
+        )));
     }
     while i < toks.len() {
         out.push(toks[i].clone());
