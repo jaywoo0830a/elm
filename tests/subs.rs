@@ -1,8 +1,6 @@
 //! v0.5 — 구독 계열 (사양서 5.3, 5.4): on_message / on_event / on_net_change /
 //! on_navigate + 스트림 목 / 이벤트 버스 / 라우팅 / 네트워크 상태
 
-use elm_magic::prelude::*;
-
 // ── on_message — 스트림 구독 (사양서 5.4) ───────────────────
 
 fn messages(room: String) -> Vec<String> {

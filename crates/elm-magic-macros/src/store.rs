@@ -138,8 +138,11 @@ fn expand_struct(toks: Vec<TokenTree>) -> TokenStream {
             // 기본값이 없으면 `Default::default()` (타입이 Default여야 한다)
             None => "::core::default::Default::default()".to_string(),
         };
+        // 키는 **선언 모듈까지 포함**한다 (0.7.3) — 서로 다른 모듈이 같은 이름의
+        // store(`struct App`)를 선언해도 같은 슬롯을 공유하지 않는다.
+        // (`module_path!()`는 이 `bind`가 전개된, 즉 `#[store]`가 쓰인 모듈이다.)
         binds.push_str(&format!(
-            "            {f}: __elm_a.store(\"{n}.{f}\", || {init}),\n",
+            "            {f}: __elm_a.store(concat!(::core::module_path!(), \"::{n}.{f}\"), || {init}),\n",
             f = fname,
             n = name,
             init = init

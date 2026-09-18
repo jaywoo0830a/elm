@@ -3,6 +3,73 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.7.3] — 2026-09-18
+
+**지역/전역 상태의 수명**을 자체 점검해서 찾은 버그를 고쳤다 — `tests/callbacks.rs`와
+같은 방식으로 "당연히 이럴 것"과 실제가 갈리는 지점을 실행해 고정했다. 공개 API는
+**추가만** 있다: `State::is_alive`, `Arena::spawn_stream_while` /
+`Arena::spawn_mockable_stream_while`, `Arena::store_writes`.
+
+### Fixed — unmount 뒤 지역 상태 쓰기
+
+- **`on_unmount { n += 1 }` → 패닉** — `end_frame`이 인스턴스 슬롯을 버린 뒤
+  `on_unmount`가 실행되는데, `+=`/`push`/`remove`는 `mutate`라
+  "slot not initialized"로 패닉했다. `n = 5`(set)는 패닉하지 않았지만 죽은
+  슬롯을 **되살려** 좀비 슬롯을 남겼다. 이제 `Arena::set`/`mutate`는 버려진
+  슬롯에 대한 쓰기를 **조용히 버린다** (store는 살아 있으므로 그대로 쓴다).
+- 회귀 테스트: `tests/state.rs` 1절 — `local_add_in_on_unmount_is_dropped_instead_of_panicking`,
+  `local_set_in_on_unmount_is_dropped`
+
+### Fixed — unmount된 인스턴스의 구독 (`on_message` / `->`)
+
+- **죽은 컴포넌트가 전역 상태를 계속 오염** — 구독은 아레나의 스트림 태스크로
+  살아 있어서, 컴포넌트가 unmount돼도 계속 값을 밀어넣었다. 지역 상태는 위
+  수정으로 조용히 버려졌지만 **`#[store]`는 살아 있어 값이 계속 올라갔다**.
+- **재마운트하면 값이 두 번 배달** — 옛 태스크가 남아 있어 구독이 2개가 됐다.
+- 이제 구독은 **수명 가드**를 갖는다: `on_message`는 구독 슬롯(`once`),
+  `->`는 대상 상태 슬롯이 죽으면 스스로 끝난다 (`spawn_stream_while`).
+  (대상이 지역 바인딩인 `->`에는 가드가 없다 — 남은 구멍.)
+- 회귀 테스트: `tests/state.rs` 2절 — `local_subscription_stops_at_unmount`,
+  `store_is_not_written_by_a_dead_subscription`, `remount_subscribes_exactly_once`,
+  `arrow_stream_stops_at_unmount`
+
+### Fixed — 전역 상태 (`#[store]`)
+
+- **동명 store가 모듈을 넘어 충돌** — 키가 `"App.count"` 하나뿐이라 서로 다른
+  모듈의 `#[store] struct App`이 같은 슬롯을 공유했다(타입이 다르면
+  "store not initialized (type mismatch?)" 패닉). 이제 키가
+  `concat!(module_path!(), "::App.count")`로 **선언 모듈까지** 포함한다.
+  (`Arena::store_version("App.count")`처럼 키 문자열을 직접 쓰던 코드는
+  `concat!(module_path!(), "::App.count")`로 바꿔야 한다.)
+- **렌더 중 전역 상태 쓰기가 형제마다 다르게 보임** — `on_mount { app.x = 5 }`는
+  렌더 중에 실행되므로, 먼저 그려진 형제는 옛 값(0)을, 나중 형제는 새 값(5)을
+  **같은 트리에서** 봤다. 이제 `frame()`이 렌더 전후 `Arena::store_writes()`를
+  비교해 **렌더 중 store가 바뀌면 그 프레임을 한 번 더 그린다**.
+- 회귀 테스트: `tests/state.rs` 3·4절 — `same_named_stores_in_different_modules_are_independent`,
+  `render_time_store_write_is_visible_to_earlier_siblings`
+
+### Fixed — 매크로 전개 (경고)
+
+- **`on_message` / `bus.emit`이 "unused borrow" 경고를 냈다** — 생성 코드가
+  `&mut __elm_ctx.arena.spawn_...(..)`처럼 수신자를 괄호로 감싸지 않아
+  `&mut (arena.메서드(..))`가 됐다(호출은 실행됐지만 경고가 났다). 이제
+  `(&mut __elm_ctx.arena).spawn_...(..)`로 전개한다 — `cargo test`가 경고 0개로 돈다.
+- `tests/subs.rs`의 미사용 `use elm_magic::prelude::*;` 제거.
+
+### 현재 의미론 (고정)
+
+- `tests/state.rs` 5·6절은 명세가 모호한 지점을 "현재 의미론" 주석과 함께 고정한다:
+  매개변수는 **초기값**이다(사양서 4.1 — 부모가 새 prop을 넘겨도 자식 상태는
+  바뀌지 않는다), `key` 없는 목록의 상태는 항목이 아니라 **자리**를 따라간다
+  (`key={id}`를 쓰면 항목을 따라간다).
+
+### Tests
+
+- `tests/state.rs` 신규 **11개** — 지역 상태 수명 2 / 구독 수명 4 / store 모듈 충돌 1 /
+  렌더 중 store 쓰기 1 / keyed·keyless 대조 2 / prop 의미론 1.
+- `cargo test --workspace` = **200** (0.7.2: 189), `--all-features` = **204** (193),
+  **경고 0개**.
+
 ## [0.7.2] — 2026-09-18
 
 세 번째 버그 리포트(`elm-magic-bug-report.md`)의 6항목을 고쳤다. **공개 API 변경 없음** —

@@ -73,6 +73,8 @@ pub struct Arena {
     stores: HashMap<&'static str, Box<dyn Any>>,
     /// store 필드별 버전 카운터 (사양서 4.2 — 변경 추적).
     store_versions: HashMap<&'static str, u64>,
+    /// store 쓰기 총 횟수 — 렌더 중 전역 상태가 바뀌었는지 판정한다 (0.7.3).
+    store_writes: u64,
     /// keyed 슬롯: `"인스턴스경로#idx"` → 슬롯 인덱스 (사양서 9.5).
     key_index: HashMap<String, usize>,
     key_next: usize,
@@ -136,20 +138,31 @@ impl Arena {
     }
 
     pub fn set<T: 'static>(&mut self, idx: usize, value: T) {
-        self.slots[idx] = Some(Box::new(value));
+        if idx >= self.slots.len() {
+            panic!("slot index out of range: {}", idx);
+        }
+        // unmount로 버려진 슬롯은 **다시 만들지 않는다** (0.7.3) — 사라진 인스턴스의
+        // 타이머/구독이 늦게 도착해도 죽은 슬롯을 되살리지 않는다.
+        if self.slots[idx].is_some() {
+            self.slots[idx] = Some(Box::new(value));
+        }
     }
 
     pub fn mutate<T: 'static, F: FnOnce(&mut T)>(&mut self, idx: usize, f: F) {
-        let v = self.get_mut::<T>(idx);
-        f(v);
+        if idx >= self.slots.len() {
+            panic!("slot index out of range: {}", idx);
+        }
+        // `set`과 같은 규칙: 버려진 슬롯에 대한 쓰기는 조용히 버린다 (0.7.3).
+        // 예전에는 `+=`/`push`/`remove`가 "slot not initialized"로 패닉했다.
+        if let Some(v) = self.slots[idx].as_mut() {
+            let v = v.downcast_mut::<T>().expect("slot type mismatch");
+            f(v);
+        }
     }
 
-    fn get_mut<T: 'static>(&mut self, idx: usize) -> &mut T {
-        self.slots[idx]
-            .as_mut()
-            .expect("slot not initialized")
-            .downcast_mut::<T>()
-            .expect("slot type mismatch")
+    /// 슬롯이 살아 있는가? (인덱스 범위 + 초기화 여부)
+    fn slot_is_alive(&self, idx: usize) -> bool {
+        idx < self.slots.len() && self.slots[idx].is_some()
     }
 
     // ── store: 전역 상태 (사양서 4.2) ────────────────────────
@@ -176,6 +189,7 @@ impl Arena {
     pub fn store_set<T: 'static>(&mut self, key: &'static str, value: T) {
         self.stores.insert(key, Box::new(value));
         *self.store_versions.entry(key).or_insert(0) += 1;
+        self.store_writes += 1;
     }
 
     pub fn store_mutate<T: 'static, F: FnOnce(&mut T)>(&mut self, key: &'static str, f: F) {
@@ -183,6 +197,7 @@ impl Arena {
             Some(v) => {
                 f(v);
                 *self.store_versions.entry(key).or_insert(0) += 1;
+                self.store_writes += 1;
             }
             None => panic!("store `{}` not initialized (type mismatch?)", key),
         }
@@ -191,6 +206,15 @@ impl Arena {
     /// store 필드의 버전 카운터 — 변경 추적 (사양서 4.2).
     pub fn store_version(&self, key: &'static str) -> u64 {
         *self.store_versions.get(key).unwrap_or(&0)
+    }
+
+    /// 전역 상태에 쓰기가 일어난 총 횟수 (0.7.3).
+    ///
+    /// `frame()`이 렌더 전후의 값을 비교해 **렌더 중 store 쓰기**를 감지하고,
+    /// 그 프레임을 한 번 더 그린다 — 같은 트리 안의 형제 컴포넌트가 서로 다른
+    /// 값을 보지 않게 하기 위해서다.
+    pub fn store_writes(&self) -> u64 {
+        self.store_writes
     }
 
     // ── keyed 슬롯 (사양서 9.5) ─────────────────────────────
@@ -301,10 +325,33 @@ impl Arena {
         I::Item: 'static,
         G: FnMut(&mut Arena, I::Item) + 'static,
     {
+        self.spawn_mockable_stream_while(name, real, |_| true, k);
+    }
+
+    /// [`spawn_mockable_stream`] + 수명 가드 (0.7.3).
+    ///
+    /// `alive`가 `false`를 돌려주면 태스크를 **버린다** (`false` 반환 = 소진 취급).
+    /// unmount된 인스턴스의 구독이 계속 값을 밀어넣던 문제를 막는다 — 특히
+    /// 전역 상태(`#[store]`)를 죽은 컴포넌트가 계속 오염시키던 경우.
+    pub fn spawn_mockable_stream_while<I, A, G>(
+        &mut self,
+        name: &'static str,
+        real: impl FnOnce() -> I + 'static,
+        alive: A,
+        k: G,
+    ) where
+        I: Iterator + 'static,
+        I::Item: 'static,
+        A: Fn(&Arena) -> bool + 'static,
+        G: FnMut(&mut Arena, I::Item) + 'static,
+    {
         let mut k = k;
         let mut real = Some(real);
         let mut it: Option<Box<dyn Iterator<Item = I::Item>>> = None;
         self.streams.push(Box::new(move |arena| {
+            if !alive(arena) {
+                return false;
+            }
             if it.is_none() {
                 it = Some(match crate::runtime::take_stream_mock::<I::Item>(name) {
                     Some(values) => Box::new(values.into_iter()),
@@ -389,19 +436,35 @@ impl Arena {
 
     /// Register a stream: each yielded value runs the continuation with the
     /// arena (사양서 5.4 — 스트림을 슬롯에 반영).
-    pub fn spawn_stream<I, G>(&mut self, iter: I, mut k: G)
+    pub fn spawn_stream<I, G>(&mut self, iter: I, k: G)
     where
         I: Iterator + 'static,
         I::Item: 'static,
         G: FnMut(&mut Arena, I::Item) + 'static,
     {
+        self.spawn_stream_while(iter, |_| true, k);
+    }
+
+    /// [`spawn_stream`] + 수명 가드 (0.7.3) — `alive`가 `false`면 태스크를 버린다.
+    pub fn spawn_stream_while<I, A, G>(&mut self, iter: I, alive: A, mut k: G)
+    where
+        I: Iterator + 'static,
+        I::Item: 'static,
+        A: Fn(&Arena) -> bool + 'static,
+        G: FnMut(&mut Arena, I::Item) + 'static,
+    {
         let mut it = iter;
-        self.streams.push(Box::new(move |arena| match it.next() {
-            Some(v) => {
-                k(arena, v);
-                true
+        self.streams.push(Box::new(move |arena| {
+            if !alive(arena) {
+                return false;
             }
-            None => false,
+            match it.next() {
+                Some(v) => {
+                    k(arena, v);
+                    true
+                }
+                None => false,
+            }
         }));
     }
 
@@ -460,6 +523,17 @@ impl<T: 'static> State<T> {
             SlotKey::Store(k) => arena.store_mutate(k, f),
         }
     }
+    /// 이 슬롯이 아직 살아 있는가? (0.7.3)
+    ///
+    /// unmount된 인스턴스의 슬롯은 `false`다. 스트림/구독이 죽은 인스턴스의
+    /// 상태를 계속 쓰지 않도록 가드로 쓴다 (`spawn_stream_while`).
+    pub fn is_alive(&self, arena: &Arena) -> bool {
+        match self.key {
+            SlotKey::Index(idx) => arena.slot_is_alive(idx),
+            SlotKey::Store(k) => arena.stores.contains_key(k),
+        }
+    }
+
     /// store 필드면 버전 카운터 (사양서 4.2), 지역 슬롯이면 항상 0.
     pub fn version(&self, arena: &Arena) -> u64 {
         match self.key {

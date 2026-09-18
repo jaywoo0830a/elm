@@ -118,8 +118,11 @@ fn special_form(
     if let Some((ev, n)) = bus_emit(env, toks, i) {
         return Some((
             parse_ts(&format!(
-                "{{ {}.emit(&{}.replace(' ', \"\")); }}",
-                arena_mut, ev
+                // 수신자 식(`&mut __elm_ctx.arena`)을 괄호로 감싼다 — 안 그러면
+                // `&mut arena.emit(..)`가 되어 "unused borrow" 경고가 난다.
+                "{{ ({a}).emit(&{ev}.replace(' ', \"\")); }}",
+                a = arena_mut,
+                ev = ev
             )),
             n,
         ));
@@ -647,7 +650,14 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                         // 구독은 인스턴스당 한 번만 (매 렌더마다 스트림이 새로 생기지 않게)
                         let once = env.slots.get();
                         env.slots.set(once + 1);
-                        let spawn = emit_stream(&src, &slot_name, g, env, "&mut __elm_ctx.arena");
+                        let spawn = emit_stream(
+                            &src,
+                            &slot_name,
+                            g,
+                            env,
+                            "&mut __elm_ctx.arena",
+                            Some("__elm_on"),
+                        );
                         pieces.push((
                             parse_ts(&format!(
                                 "{{ let __elm_on = __elm_ctx.slot({i}usize, || false); \
@@ -1050,12 +1060,15 @@ fn find_stream_arrow(toks: &[TokenTree], from: usize, env: &Env) -> Option<usize
 ///
 /// 소스가 단순 호출 `f(args)`나 식별자면 `mock_stream!`이 값을 가로챌 수 있다.
 /// `spawn_arena`는 스폰을 실행하는 위치의 아레나 식 (`_elm_a` / `&mut __elm_ctx.arena`).
+/// `alive`는 수명 가드로 쓸 상태 핸들 이름 (0.7.3) — unmount된 인스턴스의
+/// 구독이 계속 값을 밀어넣지 않게 한다.
 fn emit_stream(
     lhs: &[TokenTree],
     slot: &str,
     body_group: &Group,
     env: &Env,
     spawn_arena: &str,
+    alive: Option<&str>,
 ) -> String {
     let body_toks: Vec<TokenTree> = body_group.stream().into_iter().collect();
     let body_ts = transform_event(&body_toks, env, None, Level::Stmt).to_string();
@@ -1082,6 +1095,19 @@ fn emit_stream(
         }
     };
 
+    // 수명 가드가 있으면 `*_while` 변형을 쓰고, 가드 클로저를 끼워 넣는다.
+    let (mock_fn, stream_fn, guard) = match alive {
+        Some(h) => (
+            "spawn_mockable_stream_while",
+            "spawn_stream_while",
+            format!(
+                ", move |__elm_guard: &::elm_magic::Arena| {}.is_alive(__elm_guard)",
+                h
+            ),
+        ),
+        None => ("spawn_mockable_stream", "spawn_stream", String::new()),
+    };
+
     match lhs {
         // `f(a, b)` → 인자를 미리 계산해 두고 목을 확인한다 (`mock_stream!`)
         [TokenTree::Ident(f), TokenTree::Group(g)]
@@ -1098,28 +1124,34 @@ fn emit_stream(
                 hoist.push_str(&format!("{}, ", read_ts(p)));
             }
             format!(
-                "{{ let __elm_src_args = ({hoist}); {a}.spawn_mockable_stream({name:?}, move || ::std::iter::IntoIterator::into_iter({f}({args})), {cont}); }}",
+                "{{ let __elm_src_args = ({hoist}); ({a}).{mf}({name:?}, move || ::std::iter::IntoIterator::into_iter({f}({args})){guard}, {cont}); }}",
                 hoist = hoist,
                 a = spawn_arena,
+                mf = mock_fn,
                 name = f.to_string(),
                 f = f,
                 args = args,
+                guard = guard,
                 cont = cont
             )
         }
         // `ws` → 그대로 사용 (`on_message(ws, m)`)
         [TokenTree::Ident(f)] if !env.states.contains(&f.to_string()) => format!(
-            "{{ {a}.spawn_mockable_stream({name:?}, move || ::std::iter::IntoIterator::into_iter({f}), {cont}); }}",
+            "{{ ({a}).{mf}({name:?}, move || ::std::iter::IntoIterator::into_iter({f}){guard}, {cont}); }}",
             a = spawn_arena,
+            mf = mock_fn,
             name = f.to_string(),
             f = f,
+            guard = guard,
             cont = cont
         ),
         // 그 밖의 식: 목 없이 즉시 평가
         _ => format!(
-            "{{ {a}.spawn_stream(::std::iter::IntoIterator::into_iter({lhs}), {cont}); }}",
+            "{{ ({a}).{sf}(::std::iter::IntoIterator::into_iter({lhs}){guard}, {cont}); }}",
             a = spawn_arena,
+            sf = stream_fn,
             lhs = read_ts(lhs),
+            guard = guard,
             cont = cont
         ),
     }
@@ -1201,12 +1233,20 @@ fn transform_event(
                 TokenTree::Group(g) => g.clone(),
                 _ => unreachable!(),
             };
+            // 대상이 상태면 그 슬롯의 수명을 가드로 쓴다 (0.7.3) — 인스턴스가
+            // unmount되면 스트림이 스스로 끝난다. (지역 바인딩 대상은 가드 없음.)
+            let guard = if env.states.contains(&tname) {
+                Some(format!("__elm_state_{}", tname))
+            } else {
+                None
+            };
             out.extend(parse_ts(&emit_stream(
                 &lhs,
                 &tname,
                 &body_group,
                 env,
                 "_elm_a",
+                guard.as_deref(),
             )));
             i = j + 4;
             if i < toks.len() {

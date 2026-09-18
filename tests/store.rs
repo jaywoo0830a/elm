@@ -62,9 +62,17 @@ fn store_is_shared_between_components() {
 #[test]
 fn store_writes_bump_version() {
     let mut app = elm_magic::mount!(Root);
-    let before = app.ctx.arena.store_version("App.count");
+    let before = app
+        .ctx
+        .arena
+        .store_version(concat!(module_path!(), "::App.count"));
     app.click("inc");
-    assert!(app.ctx.arena.store_version("App.count") > before);
+    assert!(
+        app.ctx
+            .arena
+            .store_version(concat!(module_path!(), "::App.count"))
+            > before
+    );
 }
 
 // ── keyed 트리 (사양서 9.5) ─────────────────────────────────

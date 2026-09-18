@@ -164,14 +164,21 @@ pub fn into_element<T: IntoElement>(value: T) -> Element {
 /// keyed 슬롯 덕분에 사라진 인스턴스의 상태는 초기화된다.
 pub fn frame<C: Component>(ctx: &mut Ctx, props: &C::Props) -> Element {
     ctx.begin_frame();
+    let mut writes = ctx.arena.store_writes();
     let mut tree = C::render(ctx, props);
     for _ in 0..64 {
+        // 렌더 **중** 전역 상태가 바뀌었으면(예: `on_mount { app.x = 5 }`) 한 번 더
+        // 그린다 — 같은 트리의 형제 컴포넌트가 서로 다른 값을 보지 않게 (0.7.3).
+        let dirty = ctx.arena.store_writes() != writes;
         let tail = ctx.end_frame();
-        if tail.is_empty() {
+        if tail.is_empty() && !dirty {
             break;
         }
-        tail.run(&mut ctx.arena);
+        if !tail.is_empty() {
+            tail.run(&mut ctx.arena);
+        }
         ctx.begin_frame();
+        writes = ctx.arena.store_writes();
         tree = C::render(ctx, props);
     }
     tree
