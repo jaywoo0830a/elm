@@ -2,7 +2,7 @@
 
 Publishes four crates to crates.io — **`elm-magic` / `elm-magic-macros` /
 `elm-magic-egui` / `elm-magic-gpui`** — and always keeps their versions in lockstep.
-(Published: 0.1.0, 0.5.0, 0.6.0, 0.6.1, 0.7.0 → next: **0.7.1**)
+(Published: 0.1.0, 0.5.0, 0.6.0, 0.6.1, 0.7.0, 0.7.1 → next: **0.7.2**)
 
 ## 0. Prepare
 
@@ -16,12 +16,12 @@ cargo search elm-magic # check the currently published version
 | File | Field |
 |---|---|
 | `Cargo.toml` | `[package] version` |
-| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.7.1" }` |
+| `Cargo.toml` | `elm-magic-macros = { path = …, version = "0.7.2" }` |
 | `crates/elm-magic-macros/Cargo.toml` | `[package] version` |
 | `crates/elm-magic-egui/Cargo.toml` | `[package] version` |
-| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.1" }` |
+| `crates/elm-magic-egui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.2" }` |
 | `crates/elm-magic-gpui/Cargo.toml` | `[package] version` |
-| `crates/elm-magic-gpui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.1" }` |
+| `crates/elm-magic-gpui/Cargo.toml` | `elm-magic = { path = "../..", version = "0.7.2" }` |
 
 `Cargo.lock` updates itself on the next `cargo build`.
 Also refresh `README.md`'s install snippet (`elm-magic = "0.7"`) and `CHANGELOG.md`.
@@ -32,12 +32,12 @@ Also refresh `README.md`'s install snippet (`elm-magic = "0.7"`) and `CHANGELOG.
 ## 2. Local verification (mandatory before publishing — it cannot be undone)
 
 ```sh
-cargo test --workspace                  # 183
-cargo test --workspace --all-features   # 187
+cargo test --workspace                  # 189
+cargo test --workspace --all-features   # 193
 
 cargo package --allow-dirty -p elm-magic-macros
 
-# The not-yet-published 0.7.1 dependencies are substituted with local patches so that
+# The not-yet-published 0.7.2 dependencies are substituted with local patches so that
 # packaging can be verified *ahead of time*.
 cargo package --allow-dirty -p elm-magic \
   --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
@@ -53,7 +53,7 @@ cargo package --allow-dirty -p elm-magic-gpui \
 
 - The `--config patch…` flags are **verification only** — never leave patches in `Cargo.toml`.
 - Without them `-p elm-magic` fails with
-  `failed to select a version for the requirement elm-magic-macros = "^0.7.1"` because 0.7.1
+  `failed to select a version for the requirement elm-magic-macros = "^0.7.2"` because 0.7.2
   is not on crates.io yet. That is expected.
 - `--allow-dirty` is fine here: the working tree holds the version bump plus generated files
   (and `README.md` is a work in progress).
@@ -62,8 +62,8 @@ cargo package --allow-dirty -p elm-magic-gpui \
 
 ```sh
 git add -A
-git commit -m "chore: release v0.7.1"
-git tag v0.7.1
+git commit -m "chore: release v0.7.2"
+git tag v0.7.2
 git push origin HEAD --tags
 ```
 
@@ -82,8 +82,8 @@ cargo publish -p elm-magic-egui
 cargo publish -p elm-magic-gpui   # first published in 0.7.1, no propagation wait needed
 ```
 
-- `elm-magic` requires `elm-magic-macros = "0.7.1"`, so the macro crate must go first.
-- Both adapters require `elm-magic = "0.7.1"`, so they go last — after the index has
+- `elm-magic` requires `elm-magic-macros = "0.7.2"`, so the macro crate must go first.
+- Both adapters require `elm-magic = "0.7.2"`, so they go last — after the index has
   propagated (check `cargo search elm-magic`).
 - The patch verification in step 2 is local-only; the real publish must use this order.
 - `cargo publish --dry-run` needs registry access. Offline it fails with
@@ -94,24 +94,24 @@ cargo publish -p elm-magic-gpui   # first published in 0.7.1, no propagation wai
 
 ```sh
 cargo search elm-magic
-cargo add elm-magic@0.7.1 elm-magic-egui@0.7.1   # in a scratch project
+cargo add elm-magic@0.7.2 elm-magic-egui@0.7.2   # in a scratch project
 cargo test
 ```
 
-- docs.rs: <https://docs.rs/elm-magic/0.7.1> — built with `all-features`, so the `serde`
+- docs.rs: <https://docs.rs/elm-magic/0.7.2> — built with `all-features`, so the `serde`
   feature is documented (`[package.metadata.docs.rs] all-features = true`).
 - Mistakes cannot be deleted. Within 72 hours you can only
-  `cargo yank --version 0.7.1 -p <crate>` (excludes it from new dependency resolution),
+  `cargo yank --version 0.7.2 -p <crate>` (excludes it from new dependency resolution),
   so make step 2 pass before publishing.
 
 ## Checklist
 
 - [ ] 4 × `Cargo.toml` versions + 3 × path dependency requirements bumped
-- [ ] `Cargo.lock` shows 0.7.1 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
+- [ ] `Cargo.lock` shows 0.7.2 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
 - [ ] README install snippet (`0.7`) · CHANGELOG updated
-- [ ] `cargo test --workspace` / `--all-features` pass (183 / 187)
+- [ ] `cargo test --workspace` / `--all-features` pass (189 / 193)
 - [ ] `cargo package` passes for all 4 (including the patch verification)
-- [ ] commit + `git tag v0.7.1` + push
+- [ ] commit + `git tag v0.7.2` + push
 - [ ] `elm-magic-macros` → (wait for propagation) → `elm-magic` →
       `elm-magic-egui` / `elm-magic-gpui`
 - [ ] `cargo add` smoke test, docs.rs check
@@ -138,6 +138,9 @@ cargo test
   the `on_change` fixes (`crates/elm-magic-macros/src/jsx.rs`) and the new
   `elm-magic-gpui` adapter only. The report's six items all live in `view.rs` /
   `jsx.rs`, so 0.7.2 will be macros-only.
+- **0.7.2 is a patch**: the second report's six items are fixed — macros only
+  (`crates/elm-magic-macros/src/view.rs` + `jsx.rs`; no core/adapter change). The
+  report file was deleted and its repros live on in `tests/bug_report.rs` (items 5–10).
 - The 0.7.0 CHANGELOG entry was **restored to exactly what 0.7.0 published** (152 / 156
   tests) when 0.7.1 was cut; the delta moved up into `[0.7.1]`. Published 0.7.0 was
   tagged from the `0.7` / `dev` branch, not from this one.

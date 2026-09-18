@@ -3,6 +3,46 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [0.7.2] — 2026-09-18
+
+세 번째 버그 리포트(`elm-magic-bug-report.md`)의 6항목을 고쳤다. **공개 API 변경 없음** —
+모두 `view!` / JSX 전개(`crates/elm-magic-macros/src/view.rs`, `jsx.rs`)의 버그다.
+리포트 파일은 지우고 재현 코드는 `tests/bug_report.rs`에 회귀 테스트로 남긴다.
+
+### Fixed — `view!` 블록 (`view.rs`)
+
+- **한 `view!`에 컴포넌트 여러 개** — 첫 `fn` 뒤의 토큰을 그냥 버려서 두 번째 컴포넌트가
+  **경고 없이 사라졌다** (사용 지점에서 원인과 무관한 E0422로 표면화). 이제 블록 안의
+  모든 `fn`을 전개한다.
+- **`fn` 앞의 `///` → proc macro 패닉** — rustc는 문서 주석을 `#[doc = "…"]` 속성으로
+  바꿔 `pub`보다 **앞에** 두는데, visibility 파싱이 먼저 돌아 `fn`을 찾지 못하고
+  패닉했다. 이제 속성과 `pub`을 순서에 상관없이 받는다.
+- **문서를 붙일 방법이 없던 문제** — 블록 안 `fn` 앞의 문서 주석/속성을 생성 항목
+  (`X`, `XProps`, `Default` impl, `Component` impl)에 그대로 전달한다. `#[cfg(..)]`도
+  함께 전달돼 컴포넌트 단위 cfg가 일관되게 적용된다.
+  한계: 함수형 매크로는 **호출부에** 붙은 `///`를 받을 수 없다(rustc가 그 매크로 호출의
+  속성으로 두고 `unused doc comment`만 낸다) — 문서는 블록 안에 쓴다.
+
+### Fixed — JSX 전개 (`jsx.rs`)
+
+- **인자 없는 콜백 prop(`on_click: fn()`) → E0061** — `Callback::call`은 항상 값을 받는데
+  `on_click()`이 `call(arena, )`로 펼쳐졌다. 이제 `()`를 넘긴다 (`fn(bool)` + 더미 인자
+  우회는 그대로 동작한다).
+- **`format!`의 포맷 문자열이 `Text` 요소로 치환** — 표현식 위치의 문자열 리터럴을
+  무조건 `Text`로 바꾸던 규칙이 매크로 인자 목록 안까지 적용돼
+  "format argument must be a string literal"이 났다. 이제 `format!` / `println!` /
+  `vec![..]`의 인자 목록에서는 리터럴을 그대로 두고 그 안의 상태 읽기만 치환한다.
+- **prop/속성 위치의 보간 리터럴이 조용히 무시** — `text="도구 {tool} · 끝"`이 보간 없이
+  그대로 렌더됐다(컴파일 경고도 없음). 자식 텍스트와 같은 규칙으로 `format!` 식을
+  만든다 — 컴포넌트 prop / 내장 태그 속성 / `class="c {active}"` 모두.
+
+### Tests
+
+- `tests/bug_report.rs`에 6항목의 재현 코드를 회귀 테스트로 남겼다 (**+6**).
+  문서/속성 전달은 `#[cfg(any())]` 프로브로 **컴파일타임에** 고정한다(전달되지 않으면
+  수동 선언과 이름이 겹쳐 E0428이 난다).
+- `cargo test --workspace` = **189** (0.7.1: 183), `--all-features` = **193** (187)
+
 ## [0.7.1] — 2026-09-18
 
 `on_change`의 버그 두 개를 고치고 **gpui-kit 어댑터**(`elm-magic-gpui`)를 추가했다.

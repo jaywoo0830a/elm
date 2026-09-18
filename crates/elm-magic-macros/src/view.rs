@@ -86,62 +86,111 @@ fn split_params(toks: Vec<TokenTree>) -> Vec<Vec<TokenTree>> {
     out
 }
 
+/// `view! { ... }` — 블록 안의 **모든** `fn`을 컴포넌트로 전개한다.
+///
+/// 각 컴포넌트 앞의 문서 주석(`///`)·속성은 생성 항목(`X` / `XProps` / `impl`)에
+/// 그대로 붙는다. `#[attr]`·`pub`는 순서를 가리지 않고 받는다 (문서 주석은 rustc가
+/// `#[doc = "…"]`로 바꿔 넘기므로 `pub`보다 앞에 온다 — 리포트 버그 2).
 pub fn expand(item: TokenStream) -> TokenStream {
     let toks: Vec<TokenTree> = item.into_iter().collect();
     let mut i = 0;
+    let mut out = TokenStream::new();
+    let mut components = 0usize;
 
-    // visibility — `pub`, `pub(crate)`, `pub(super)`, `pub(in path)` 모두 보존한다.
-    // (`pub(crate)` 그룹을 버리면 의미가 `pub`으로 넓어진다.)
-    let mut vis = String::new();
-    if let Some(TokenTree::Ident(id)) = toks.get(i) {
-        if id.to_string() == "pub" {
-            vis = "pub".to_string();
+    while i < toks.len() {
+        // 아이템 구분용 `;`가 있으면 넘긴다.
+        if matches!(toks.get(i), Some(TokenTree::Punct(p)) if p.as_char() == ';') {
             i += 1;
-            if let Some(TokenTree::Group(g)) = toks.get(i) {
-                if g.delimiter() == Delimiter::Parenthesis {
-                    vis.push_str(&format!("({})", g.stream()));
-                    i += 1;
+            continue;
+        }
+
+        let mut attrs: Vec<TokenTree> = Vec::new();
+        let mut vis = String::new();
+        // 속성(문서 주석 포함)과 visibility를 순서에 상관없이 모은다.
+        loop {
+            // `#` `[..]` → 생성 항목으로 넘길 속성 (문서 주석도 여기로 온다)
+            if matches!(toks.get(i), Some(TokenTree::Punct(p)) if p.as_char() == '#') {
+                // `#!` `[..]` → 내부 속성: 블록 맨 앞에서만 의미가 있으므로 버린다.
+                if matches!(toks.get(i + 1), Some(TokenTree::Punct(b)) if b.as_char() == '!') {
+                    if matches!(toks.get(i + 2), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
+                    {
+                        i += 3;
+                        continue;
+                    }
+                }
+                if matches!(toks.get(i + 1), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
+                {
+                    attrs.push(toks[i].clone());
+                    attrs.push(toks[i + 1].clone());
+                    i += 2;
+                    continue;
                 }
             }
-            vis.push(' ');
-        }
-    }
-
-    // optional inner attributes / doc comments: skip `#` `![...]`
-    while i + 1 < toks.len() {
-        if let (TokenTree::Punct(p), Some(TokenTree::Group(_))) = (&toks[i], toks.get(i + 1)) {
-            if p.as_char() == '#' {
-                i += 2;
-                continue;
+            // visibility — `pub`, `pub(crate)`, `pub(super)`, `pub(in path)` 모두 보존한다.
+            // (`pub(crate)` 그룹을 버리면 의미가 `pub`으로 넓어진다.)
+            if vis.is_empty() {
+                if let Some(TokenTree::Ident(id)) = toks.get(i) {
+                    if id.to_string() == "pub" {
+                        vis = "pub".to_string();
+                        i += 1;
+                        if let Some(TokenTree::Group(g)) = toks.get(i) {
+                            if g.delimiter() == Delimiter::Parenthesis {
+                                vis.push_str(&format!("({})", g.stream()));
+                                i += 1;
+                            }
+                        }
+                        vis.push(' ');
+                        continue;
+                    }
+                }
             }
+            break;
         }
-        break;
+
+        // `fn Name(params) { body }` — 블록에 여러 개가 올 수 있다 (리포트 버그 1).
+        match (
+            toks.get(i),
+            toks.get(i + 1),
+            toks.get(i + 2),
+            toks.get(i + 3),
+        ) {
+            (
+                Some(TokenTree::Ident(f)),
+                Some(TokenTree::Ident(name)),
+                Some(TokenTree::Group(params)),
+                Some(TokenTree::Group(body)),
+            ) if f.to_string() == "fn"
+                && params.delimiter() == Delimiter::Parenthesis
+                && body.delimiter() == Delimiter::Brace =>
+            {
+                let fn_name = name.to_string();
+                out.extend(expand_fn(
+                    &fn_name,
+                    &vis,
+                    &attrs,
+                    params.clone(),
+                    body.clone(),
+                ));
+                i += 4;
+                components += 1;
+            }
+            _ => panic!("elm-magic: view! expects `fn Name(params) {{ ... }}`"),
+        }
     }
 
-    // `fn Name(params) { body }`
-    match (
-        toks.get(i),
-        toks.get(i + 1),
-        toks.get(i + 2),
-        toks.get(i + 3),
-    ) {
-        (
-            Some(TokenTree::Ident(f)),
-            Some(TokenTree::Ident(name)),
-            Some(TokenTree::Group(params)),
-            Some(TokenTree::Group(body)),
-        ) if f.to_string() == "fn"
-            && params.delimiter() == Delimiter::Parenthesis
-            && body.delimiter() == Delimiter::Brace =>
-        {
-            let fn_name = name.to_string();
-            expand_fn(&fn_name, &vis, params.clone(), body.clone())
-        }
-        _ => panic!("elm-magic: view! expects `fn Name(params) {{ ... }}`"),
+    if components == 0 {
+        panic!("elm-magic: view! expects at least one `fn Name(params) {{ ... }}`");
     }
+    out
 }
 
-fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStream {
+fn expand_fn(
+    fn_name: &str,
+    vis: &str,
+    attrs: &[TokenTree],
+    params: Group,
+    body: Group,
+) -> TokenStream {
     let param_toks: Vec<TokenTree> = params.stream().into_iter().collect();
     let param_groups = split_params(param_toks);
 
@@ -313,10 +362,13 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     // lifecycle constructs (on_mount/on_tick/on_change) allocate hidden slots
     let total_slots = slot_cell.get();
 
+    // 앞에 모은 문서 주석/속성을 생성 항목에 그대로 붙인다 (버그 3).
+    let attrs_src = render_tokens(attrs);
     let mut head = String::new();
     // `vis`는 `struct` 앞에만 — `#[derive(..)]` 앞에 찍으면 `pub #[derive(..)]`가 된다.
     head.push_str(&format!(
-        "#[derive(::core::clone::Clone)]\n{v}struct {n}Props {{\n",
+        "{a}#[derive(::core::clone::Clone)]\n{v}struct {n}Props {{\n",
+        a = attrs_src,
         v = vis,
         n = fn_name
     ));
@@ -329,7 +381,8 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     code.push_str(&head);
     // 모든 prop은 `Option<T>`: `None`이면 선언된 기본값을 쓴다 (사양서 4.1).
     code.push_str(&format!(
-        "impl ::core::default::Default for {n}Props {{\n    fn default() -> Self {{\n        Self {{\n",
+        "{a}impl ::core::default::Default for {n}Props {{\n    fn default() -> Self {{\n        Self {{\n",
+        a = attrs_src,
         n = fn_name
     ));
     for f in &default_inits {
@@ -337,7 +390,8 @@ fn expand_fn(fn_name: &str, vis: &str, params: Group, body: Group) -> TokenStrea
     }
     code.push_str("        }\n    }\n}\n");
     code.push_str(&format!(
-        "{v}struct {n};\nimpl ::elm_magic::Component for {n} {{\n    type Props = {n}Props;\n    const SLOTS: usize = {s};\n    fn render(__elm_ctx: &mut ::elm_magic::Ctx, __elm_props: &{n}Props) -> ::elm_magic::Element {{\n",
+        "{a}{v}struct {n};\n{a}impl ::elm_magic::Component for {n} {{\n    type Props = {n}Props;\n    const SLOTS: usize = {s};\n    fn render(__elm_ctx: &mut ::elm_magic::Ctx, __elm_props: &{n}Props) -> ::elm_magic::Element {{\n",
+        a = attrs_src,
         v = vis,
         n = fn_name,
         s = total_slots

@@ -1,6 +1,6 @@
 [package]
 name = "elm-magic-gpui"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 description = "gpui-kit adapter for elm-magic: maps the css! ResolvedStyle onto gpui-kit theme tokens and renders elm-magic Element trees as GPUI elements."
 license = "MIT"
@@ -10,7 +10,7 @@ keywords = ["ui", "gui", "gpui", "elm", "jsx"]
 categories = ["gui"]
 
 [dependencies]
-elm-magic = { path = "../..", version = "0.7.1" }
+elm-magic = { path = "../..", version = "0.7.2" }
 # gpui-kit 0.6 re-exports GPUI itself (`gpui_kit::*`), gpui-base (`gpui_kit::base`)
 # and gpui-component (`gpui_kit::component`) — the styled layer + theme tokens.
 gpui-kit = "0.6"

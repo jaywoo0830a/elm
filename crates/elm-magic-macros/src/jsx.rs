@@ -133,6 +133,13 @@ fn special_form(
             if g.delimiter() == Delimiter::Parenthesis {
                 let args: Vec<TokenTree> = g.stream().into_iter().collect();
                 let args_ts = transform_event_read(&args, env, None, Level::Expr).to_string();
+                // 인자 없는 콜백 prop(`on_click: fn()`)은 `Callback<()>`다 —
+                // `call`은 항상 값을 받으므로 `()`를 넘긴다 (리포트 버그 4).
+                let args_ts = if args_ts.trim().is_empty() {
+                    "()".to_string()
+                } else {
+                    args_ts
+                };
                 return Some((
                     parse_ts(&format!(
                         "{{ let __elm_cb = __elm_cb_{n}.clone(); __elm_cb.call({a}, {args}); }}",
@@ -899,7 +906,17 @@ fn transform_tokens(toks: &[TokenTree], env: &Env, mode: Mode) -> TokenStream {
     }
 }
 
+/// 렌더 위치 전개. 문자열 리터럴은 **요소 자리**에서만 `Text`가 된다.
 fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
+    transform_render_inner(toks, env, true)
+}
+
+/// `lit_text`가 `false`면 문자열 리터럴을 `Text` 요소로 바꾸지 않는다.
+///
+/// 매크로 인자 목록(`format!("v {}", v)`, `println!(..)`, `vec![..]`)의 리터럴은
+/// 포맷 문자열이지 화면 텍스트가 아니다 — 예전에는 `"v {}"`가 `Element::Text`로
+/// 바뀌어 `format!(<Element>, v)`가 됐다 (리포트 버그 5).
+fn transform_render_inner(toks: &[TokenTree], env: &Env, lit_text: bool) -> TokenStream {
     let mut out: Vec<TokenTree> = Vec::new();
     let mut i = 0;
     let mut prev_colon = false;
@@ -917,12 +934,14 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
             }
         }
         // interpolated string literal in element position: "x {y}" → Text
-        if let TokenTree::Literal(l) = &toks[i] {
-            let s = l.to_string();
-            if s.starts_with('"') && s.contains('{') {
-                out.extend(text_expr(&s[1..s.len() - 1], env));
-                i += 1;
-                continue;
+        if lit_text {
+            if let TokenTree::Literal(l) = &toks[i] {
+                let s = l.to_string();
+                if s.starts_with('"') && s.contains('{') {
+                    out.extend(text_expr(&s[1..s.len() - 1], env));
+                    i += 1;
+                    continue;
+                }
             }
         }
         // 구조체 리터럴 축약 `Todo { text }` (중괄호 유지)
@@ -975,7 +994,12 @@ fn transform_render(toks: &[TokenTree], env: &Env) -> TokenStream {
         }
         if let TokenTree::Group(g) = &toks[i] {
             let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-            let body = transform_render(&inner, env);
+            // 매크로 인자 목록(`!` 바로 뒤의 `(..)`/`[..]`)이면 그 안의 리터럴을
+            // 화면 텍스트로 보지 않는다 (버그 5).
+            let macro_args = matches!(g.delimiter(), Delimiter::Parenthesis | Delimiter::Bracket)
+                && matches!(toks.get(i.wrapping_sub(1)),
+                    Some(TokenTree::Punct(p)) if p.as_char() == '!');
+            let body = transform_render_inner(&inner, env, lit_text && !macro_args);
             out.push(TokenTree::Group(Group::new(g.delimiter(), body)));
             i += 1;
             continue;
@@ -1681,6 +1705,34 @@ enum AttrVal {
     Flag,
 }
 
+/// 문자열 리터럴 속성값 → [`AttrVal`].
+///
+/// `{expr}` 보간이 있으면 `format!` 식(`String`)으로 바꾼다 — 자식 텍스트의
+/// [`text_from_children`]과 같은 규칙. 예전에는 prop/속성값이 그대로
+/// `String::from("…")`이 되어 `"도구 {tool} · 끝"`이 **조용히** 보간 없이
+/// 렌더됐다 (리포트 버그 6).
+fn attr_lit(content: &str, env: &Env) -> AttrVal {
+    if !content.contains('{') {
+        return AttrVal::Lit(content.to_string());
+    }
+    let (fmt, args) = split_fmt(content);
+    if args.is_empty() {
+        return AttrVal::Lit(content.to_string());
+    }
+    let parts: Vec<String> = args
+        .iter()
+        .map(|a| {
+            let toks: Vec<TokenTree> = a.parse::<TokenStream>().unwrap().into_iter().collect();
+            transform_render(&toks, env).to_string()
+        })
+        .collect();
+    AttrVal::Expr(parse_ts(&format!(
+        "::std::string::String::from(::std::format!({:?}, {}))",
+        fmt,
+        parts.join(", ")
+    )))
+}
+
 /// Parse `<Tag attrs> children </Tag>` or `<Tag attrs />` at toks[i] == `<`.
 fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, usize) {
     let tag = match &toks[start + 1] {
@@ -1721,7 +1773,14 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
                     match toks.get(i + 2) {
                         Some(TokenTree::Literal(l)) => {
                             let s = l.to_string();
-                            attrs.push((key, AttrVal::Lit(s[1..s.len() - 1].to_string())));
+                            let val = if s.starts_with('"') {
+                                // 문자열 리터럴: `{expr}` 보간을 펼친다 (버그 6).
+                                attr_lit(&s[1..s.len() - 1], env)
+                            } else {
+                                // 숫자 등 그 밖의 리터럴은 그대로 식으로 넘긴다.
+                                AttrVal::Expr(parse_ts(&s))
+                            };
+                            attrs.push((key, val));
                             i += 3;
                         }
                         Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {

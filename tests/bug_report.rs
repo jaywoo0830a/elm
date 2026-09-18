@@ -10,6 +10,18 @@
 //!    재작성되지 않아 E0716(temporary dropped while borrowed)이 나던 문제
 //! 4) (0.6.0) BEM 수정자(`.tabs__item--active`)가 `-` 단위로 쪼개져
 //!    `.tabs__item - - active`로 조인 → 파싱 실패 → **조용히 미등록**되던 문제
+//!
+//! 0.7.2에서 고친 두 번째 리포트(`elm-magic-bug-report.md`)의 6항목:
+//!
+//! 5) `view!` 한 블록의 두 번째 `fn`부터 **경고 없이 사라지던** 문제
+//! 6) 첫 `fn` 앞의 `///`가 proc macro 패닉을 내던 문제 (rustc가 문서 주석을
+//!    `#[doc]`로 바꿔 `pub`보다 앞에 두는데, visibility 파싱이 이를 몰랐다)
+//! 7) `view!` 블록 **안**의 문서 주석/속성이 생성 항목으로 전달되지 않던 문제
+//! 8) 인자 없는 콜백 prop(`fn()`)을 호출하면 `Callback::call` 인자가 부족(E0061)
+//! 9) `format!`의 포맷 문자열 리터럴이 `Text` 요소로 치환돼
+//!    "format argument must be a string literal"이 나던 문제
+//! 10) prop/속성 위치의 보간 리터럴(`text="도구 {x}"`)이 **조용히** 보간되지
+//!     않고 그대로 렌더되던 문제
 
 // ── 버그 1: `pub fn` / `pub(crate) fn` ──────────────────────
 
@@ -242,5 +254,173 @@ fn hyphenated_class_name_is_registered() {
             .unwrap()
             .selector(),
         ".my-class"
+    );
+}
+// ── 0.7.2 (두 번째 리포트) ───────────────────────────────────
+
+// 버그 5 + 6 + 7: 한 `view!` 블록에 여러 컴포넌트 / 첫 `fn` 앞 문서 주석 /
+// 블록 **안**의 주석·속성이 생성 항목으로 전달된다.
+elm_magic::view! {
+    /// Gamma — 첫 `fn` 앞의 문서 주석 (버그 6: 예전에는 proc macro 패닉).
+    pub fn Gamma(text: String = String::new()) {
+        <Text class="g">"{text}"</Text>
+    }
+
+    /// Beta — 두 번째 `fn` (버그 5: 예전에는 경고 없이 사라졌다).
+    pub fn Beta(text: String = String::new()) {
+        <Text class="b">"{text}"</Text>
+    }
+}
+
+#[test]
+fn one_view_block_defines_every_fn() {
+    let gamma = elm_magic::testing::mount_with::<Gamma>(GammaProps {
+        text: Some("first".to_string()),
+        ..Default::default()
+    });
+    gamma.assert_text("first");
+
+    let beta = elm_magic::testing::mount_with::<Beta>(BetaProps {
+        text: Some("second".to_string()),
+        ..Default::default()
+    });
+    beta.assert_text("second");
+}
+
+/// 버그 7 — `view!` 블록 안의 속성이 생성 항목으로 전달되는지 고정한다.
+///
+/// 함수형 proc macro는 **호출부에** 붙은 `///`를 받을 수 없다 (rustc가 그 매크로
+/// 호출의 속성으로 두고 "unused doc comment"만 낸다). 그래서 문서는 블록 안
+/// `fn` 앞에 쓴다.
+///
+/// `#[cfg(any())]`가 전달되면 생성 항목(`AttributeProbe`/`AttributeProbeProps`)이
+/// 사라져 아래 선언과 이름이 겹치지 않는다. 전달되지 않으면 E0428(이름 중복)로
+/// 컴파일이 깨진다 — 이 모듈이 컴파일된다는 사실 자체가 회귀 테스트다.
+mod attr_forwarding_probe {
+    #![allow(dead_code)]
+
+    elm_magic::view! {
+        /// 문서 주석도 생성 항목의 rustdoc이 된다 (버그 7의 수정 내용).
+        #[cfg(any())]
+        fn AttributeProbe(text: String = String::new()) {
+            <Text>"text{text}"</Text>
+        }
+    }
+
+    struct AttributeProbe;
+    struct AttributeProbeProps;
+}
+
+// ── 버그 8: 인자 없는 콜백 prop(`fn()`) ─────────────────────
+
+elm_magic::view! {
+    fn CbZero(on_click: fn()) {
+        <Button class="b" on_click={on_click()}>"z"</Button>
+    }
+
+    fn UsesCbZero(count = 0) {
+        <Col>
+            <CbZero on_click={count += 1} />
+            "count: {count}"
+        </Col>
+    }
+}
+
+#[test]
+fn zero_arg_callback_prop_can_be_invoked() {
+    let mut app = elm_magic::testing::mount::<UsesCbZero>();
+    app.assert_text("count: 0");
+    app.click("z");
+    app.assert_text("count: 1");
+}
+
+// ── 버그 9: `format!` 포맷 문자열이 `Text`로 치환 ───────────
+
+elm_magic::view! {
+    /// 버그 9 prop 위치 대상 (`text: String`).
+    fn FmtHost(text: String = String::new()) {
+        <Text class="h">"{text}"</Text>
+    }
+
+    /// 자식 위치.
+    fn FmtChild(v: u32 = 0) {
+        <Text class="t">{format!("v {}", v)}</Text>
+    }
+
+    /// prop 위치.
+    fn FmtProp(tool: String = String::new()) {
+        <FmtHost text={format!("도구 {}", tool)} />
+    }
+}
+
+#[test]
+fn format_macro_works_in_child_and_prop_position() {
+    let child = elm_magic::testing::mount_with::<FmtChild>(FmtChildProps {
+        v: Some(7),
+        ..Default::default()
+    });
+    child.assert_text("v 7");
+
+    let prop = elm_magic::testing::mount_with::<FmtProp>(FmtPropProps {
+        tool: Some("Pen".to_string()),
+        ..Default::default()
+    });
+    prop.assert_text("도구 Pen");
+}
+
+// ── 버그 10: prop/속성 위치의 보간 리터럴 ───────────────────
+
+elm_magic::view! {
+    /// 버그 10 대상 컴포넌트 (`text: String`).
+    fn InterpHost(text: String = String::new()) {
+        <Text class="ih">"{text}"</Text>
+    }
+
+    /// 컴포넌트 prop 위치 (리포트의 `<P text="도구 {tool} · 끝" />`).
+    fn InterpProp(tool: String = String::new()) {
+        <InterpHost text="도구 {tool} · 끝" />
+    }
+
+    /// 내장 태그의 문자열 속성 위치.
+    fn InterpBuiltin(label: String = String::new()) {
+        <Text class="ib" text="라벨 {label}" />
+    }
+
+    /// 클래스 속성 위치.
+    fn InterpClass(active: bool = false) {
+        <Text class="c {active}">"x"</Text>
+    }
+}
+
+#[test]
+fn interpolated_literal_in_component_prop_is_expanded() {
+    let app = elm_magic::testing::mount_with::<InterpProp>(InterpPropProps {
+        tool: Some("Pen".to_string()),
+        ..Default::default()
+    });
+    app.assert_text("도구 Pen · 끝");
+}
+
+#[test]
+fn interpolated_literal_in_builtin_attr_is_expanded() {
+    let app = elm_magic::testing::mount_with::<InterpBuiltin>(InterpBuiltinProps {
+        label: Some("ok".to_string()),
+        ..Default::default()
+    });
+    app.assert_text("라벨 ok");
+}
+
+#[test]
+fn interpolated_literal_in_class_is_expanded() {
+    let app = elm_magic::testing::mount_with::<InterpClass>(InterpClassProps {
+        active: Some(true),
+        ..Default::default()
+    });
+    app.assert_text("x");
+    let tree = app.render_tree();
+    assert!(
+        tree.contains(".c.true"),
+        "class=\"c {{active}}\"가 보간돼야 한다:\n{}",
+        tree
     );
 }
