@@ -721,6 +721,9 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
             TokenTree::Ident(id) if id.to_string() == "on_change" => {
                 // on_change(expr) { ... }            — 즉시(변경 감지)
                 // on_change(expr) after 300ms { ... } — 디바운스 (사양서 5.2)
+                //
+                // 마운트는 "변경"이 아니다: 첫 렌더의 값을 기준선으로 삼고
+                // 발화하지 않는다(`fired = true`). 값이 바뀔 때만 재무장한다.
                 let val = match toks.get(i + 1) {
                     Some(TokenTree::Group(v)) if v.delimiter() == Delimiter::Parenthesis => {
                         v.clone()
@@ -761,13 +764,20 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                         let mut __elm_pend = __elm_p.get(&__elm_ctx.arena).clone(); \
                         let mut __elm_since = *__elm_s.get(&__elm_ctx.arena); \
                         let mut __elm_fired = *__elm_f.get(&__elm_ctx.arena); \
-                        if __elm_pend.as_ref() != ::std::option::Option::Some(&__elm_v) {{ \
+                        if __elm_pend.is_none() {{ \
+                            /* 첫 렌더: 초기값을 기준선으로 삼는다 — 마운트는 변경이 아니다. */ \
+                            __elm_pend = ::std::option::Option::Some(__elm_v.clone()); \
+                            __elm_since = __elm_ctx.now; \
+                            __elm_fired = true; \
+                        }} else if __elm_pend.as_ref() != ::std::option::Option::Some(&__elm_v) {{ \
                             __elm_pend = ::std::option::Option::Some(__elm_v.clone()); \
                             __elm_since = __elm_ctx.now; \
                             __elm_fired = false; \
                         }} \
                         __elm_p.set(&mut __elm_ctx.arena, __elm_pend.clone()); \
                         __elm_s.set(&mut __elm_ctx.arena, __elm_since); \
+                        /* 재무장(false)을 반드시 되쓴다 — 안 쓰면 발화가 1회로 끝난다. */ \
+                        __elm_f.set(&mut __elm_ctx.arena, __elm_fired); \
                         if !__elm_fired && __elm_ctx.now - __elm_since >= {d} {{ \
                             __elm_f.set(&mut __elm_ctx.arena, true); \
                             let _elm_a = &mut __elm_ctx.arena; \
