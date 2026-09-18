@@ -94,25 +94,26 @@ cargo publish -p elm-magic-gpui   # first published in 0.7.1, no propagation wai
 
 ```sh
 cargo search elm-magic
-cargo add elm-magic@0.6.1 elm-magic-egui@0.6.1   # in a scratch project
+cargo add elm-magic@0.7.1 elm-magic-egui@0.7.1   # in a scratch project
 cargo test
 ```
 
-- docs.rs: <https://docs.rs/elm-magic/0.6.1> — built with `all-features`, so the `serde`
+- docs.rs: <https://docs.rs/elm-magic/0.7.1> — built with `all-features`, so the `serde`
   feature is documented (`[package.metadata.docs.rs] all-features = true`).
 - Mistakes cannot be deleted. Within 72 hours you can only
-  `cargo yank --version 0.6.1 -p <crate>` (excludes it from new dependency resolution),
+  `cargo yank --version 0.7.1 -p <crate>` (excludes it from new dependency resolution),
   so make step 2 pass before publishing.
 
 ## Checklist
 
-- [ ] 3 × `Cargo.toml` versions + 2 × path dependency requirements bumped
-- [ ] `Cargo.lock` shows 0.6.1 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
-- [ ] README install snippet · CHANGELOG updated
-- [ ] `cargo test --workspace` / `--all-features` pass (138 / 142)
-- [ ] `cargo package` passes for all 3 (including the patch verification)
-- [ ] commit + `git tag v0.6.1` + push
-- [ ] `elm-magic-macros` → (wait for propagation) → `elm-magic` → `elm-magic-egui`
+- [ ] 4 × `Cargo.toml` versions + 3 × path dependency requirements bumped
+- [ ] `Cargo.lock` shows 0.7.1 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
+- [ ] README install snippet (`0.7`) · CHANGELOG updated
+- [ ] `cargo test --workspace` / `--all-features` pass (183 / 187)
+- [ ] `cargo package` passes for all 4 (including the patch verification)
+- [ ] commit + `git tag v0.7.1` + push
+- [ ] `elm-magic-macros` → (wait for propagation) → `elm-magic` →
+      `elm-magic-egui` / `elm-magic-gpui`
 - [ ] `cargo add` smoke test, docs.rs check
 
 ## Optional
@@ -132,3 +133,11 @@ cargo test
   hyphenated class selectors (BEM modifiers like `.tabs__item--active`). No API change,
   no new features; only `join_selector` / `validate_selector` (macros) and
   `style::register` (core) plus `tests/bug_report.rs` regression tests.
+- **0.7.1 is a patch**: the second FreeDF bug report (`elm-magic-bug-report.md`, six
+  items) is **not** in this release — its header says `0.7.2에서 수정 예정`. 0.7.1 ships
+  the `on_change` fixes (`crates/elm-magic-macros/src/jsx.rs`) and the new
+  `elm-magic-gpui` adapter only. The report's six items all live in `view.rs` /
+  `jsx.rs`, so 0.7.2 will be macros-only.
+- The 0.7.0 CHANGELOG entry was **restored to exactly what 0.7.0 published** (152 / 156
+  tests) when 0.7.1 was cut; the delta moved up into `[0.7.1]`. Published 0.7.0 was
+  tagged from the `0.7` / `dev` branch, not from this one.
