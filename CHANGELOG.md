@@ -50,7 +50,7 @@
 
 ### Fixed — `on_change` 콜백 두 가지 (콜백 계약 테스트가 잡음)
 
-`tests/callback_contract.rs`로 코어 콜백 계약을 고정하는 과정에서 드러난
+`tests/callbacks.rs`의 코어 콜백 계약(1부)을 고정하는 과정에서 드러난
 `on_change`의 버그 두 개 (`crates/elm-magic-macros/src/jsx.rs`):
 
 - **마운트 시 발화**: 첫 렌더에서 `pending = None → 초기값`을 "변경"으로
@@ -62,14 +62,16 @@
   슬롯에 되쓰지 않아, 다음 렌더가 이전의 `true`를 읽었다. 결과적으로
   `on_change(x) after …`가 **컴포넌트 수명당 최대 1회**만 발화했다.
   이제 무장 상태를 매 렌더 되쓴다.
-- **회귀 테스트**: `tests/callback_contract.rs` — 위 두 버그를 직접 재현하는
+- **회귀 테스트**: `tests/callbacks.rs` — 위 두 버그를 직접 재현하는
   `immediate_on_change_does_not_fire_on_mount`,
   `debounce_does_not_fire_on_mount_even_after_the_delay_elapses`,
   `debounce_restarts_on_every_change_and_delivers_the_latest_value` 포함
 
 ### Tests
 
-- `tests/callback_contract.rs` 신규 **31개** — 어댑터를 거치지 않고 코어 콜백
+- `tests/callbacks.rs`에 **1부 — 코어 콜백 계약**(어댑터 무관) 섹션 **31개**를
+  통합 — 기존 `callbacks.rs`(콜백 prop + children, 2부)와 한 파일에 모았다.
+  어댑터를 거치지 않고 코어 콜백
   계약만 검증한다: `on_click` / `on_change`(값·bool) / `on_enter` /
   `on_change … after` / `on_mount` / `on_unmount` / `on_key` / `on_tick` /
   `on_event`+`bus.emit` / `on_net_change` / `on_navigate` / `<-` 효과 /
