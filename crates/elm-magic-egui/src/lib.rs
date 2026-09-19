@@ -21,6 +21,22 @@
 //! 스타일이 적용되는 태그: `Col` `Row` `Text` `Strong` `Button` `Banner`
 //! `Tab` `Th` `Td` `Check` `Spinner` `Divider` `Progress` `Modal`.
 //!
+//! ## 0.8 확장 속성
+//!
+//! 코어가 해석하는 62개 속성 중 어댑터가 그리는 것: `flex-direction` `flex-grow`
+//! `align-self` `padding-*`/`margin-*`(개별 변) `border-style`/`border-*-width`
+//! `overflow` `aspect-ratio` `white-space` `text-overflow` `max-lines` `scale`
+//! `z-index` `pointer-events`.
+//!
+//! 근사가 있는 것 (egui 표현 수단 한계):
+//! - `border-style`의 `dashed`/`dotted`는 실선으로, 개별 `border-*-width`는
+//!   네 변이 같은 stroke라 **최댓값**으로 그린다 (`none`은 테두리를 없앤다).
+//! - `max-lines`는 egui에 줄 수 제한이 없어 **잘라내기**로 근사한다.
+//! - `scale`은 노드 좌상단 기준 **시각 변환**으로, `z-index > 0`은 전경
+//!   레이어로 근사한다. `rotate`는 egui `TSTransform`에 회전이 없어 반영하지 않는다.
+//! - `pointer-events: none`은 클릭 핸들러와 커서를 막는다(호버 색은 남는다).
+//! - `flex-shrink`는 코어가 값을 해석하지만 배분에는 아직 쓰지 않는다.
+//!
 //! ## 스타일 리셋 (기본값 없음)
 //!
 //! 어댑터는 그리기 전에 egui의 기본 스타일을 **전부 리셋**한다 —
@@ -37,7 +53,8 @@
 //! 선언으로 지정한다.
 
 use elm_magic::style::{
-    Align as StyleAlign, Color, Cursor, Edges, Len, Palette, ResolvedStyle, State, Token,
+    Align as StyleAlign, BorderStyle, Color, Cursor, Direction, Edges, Len, Overflow, Palette,
+    ResolvedStyle, State, Token,
 };
 use elm_magic::Arena;
 use elm_magic::{
@@ -183,6 +200,106 @@ fn align_of(a: Option<StyleAlign>) -> egui::Align {
         Some(StyleAlign::End) => egui::Align::Max,
         _ => egui::Align::Min,
     }
+}
+
+// ─ 0.8 확장 속성 → 실효 값 ─────────────────────────────────
+
+/// 숏핸드(`padding`/`margin`)와 개별 `*-top/right/bottom/left`를 합친다.
+///
+/// 개별 값이 있으면 그 변만 덮어쓴다 (`padding: 8; padding-left: 4`).
+fn combine_edges(
+    base: Option<Edges>,
+    top: Option<f32>,
+    right: Option<f32>,
+    bottom: Option<f32>,
+    left: Option<f32>,
+) -> Option<Edges> {
+    let any = top.is_some() || right.is_some() || bottom.is_some() || left.is_some();
+    match (base, any) {
+        (None, false) => None,
+        (None, true) => Some(Edges::new(
+            top.unwrap_or(0.0),
+            right.unwrap_or(0.0),
+            bottom.unwrap_or(0.0),
+            left.unwrap_or(0.0),
+        )),
+        (Some(b), _) => Some(Edges::new(
+            top.unwrap_or(b.top),
+            right.unwrap_or(b.right),
+            bottom.unwrap_or(b.bottom),
+            left.unwrap_or(b.left),
+        )),
+    }
+}
+
+/// 실효 `padding` — 숏핸드 + `padding-*`.
+fn padding_of(style: &ResolvedStyle) -> Option<Edges> {
+    combine_edges(
+        style.padding,
+        style.padding_top,
+        style.padding_right,
+        style.padding_bottom,
+        style.padding_left,
+    )
+}
+
+/// 실효 `margin` — 숏핸드 + `margin-*`.
+fn margin_of(style: &ResolvedStyle) -> Option<Edges> {
+    combine_edges(
+        style.margin,
+        style.margin_top,
+        style.margin_right,
+        style.margin_bottom,
+        style.margin_left,
+    )
+}
+
+/// 실효 테두리 두께 — `border-width` + `border-*-width`, `border-style: none`이면 없음.
+///
+/// egui `Frame`의 stroke는 네 변이 같은 두께라 개별 두께는 **최댓값**으로 근사한다.
+fn border_of(style: &ResolvedStyle) -> Option<f32> {
+    if style.border_style == Some(BorderStyle::None) {
+        return None;
+    }
+    let declared = style.border_width.is_some()
+        || style.border_top_width.is_some()
+        || style.border_right_width.is_some()
+        || style.border_bottom_width.is_some()
+        || style.border_left_width.is_some();
+    if !declared {
+        return None;
+    }
+    let per_side = [
+        style.border_top_width,
+        style.border_right_width,
+        style.border_bottom_width,
+        style.border_left_width,
+    ]
+    .into_iter()
+    .flatten()
+    .fold(0.0f32, f32::max);
+    Some(style.border_width.unwrap_or(0.0).max(0.0).max(per_side))
+}
+
+/// `overflow`가 자식을 자르는가 (`hidden`/`scroll`/`auto`).
+fn clips_children(style: &ResolvedStyle) -> bool {
+    matches!(
+        style.overflow,
+        Some(Overflow::Hidden) | Some(Overflow::Scroll) | Some(Overflow::Auto)
+    )
+}
+
+/// `overflow`가 스크롤 영역을 만드는가 (`scroll`/`auto`).
+fn scrolls_children(style: &ResolvedStyle) -> bool {
+    matches!(
+        style.overflow,
+        Some(Overflow::Scroll) | Some(Overflow::Auto)
+    )
+}
+
+/// `pointer-events`가 상호작용을 허용하는가 (미선언 = 허용).
+fn interactive(style: &ResolvedStyle) -> bool {
+    style.pointer_events != Some(false)
 }
 
 fn cursor_of(c: Cursor) -> egui::CursorIcon {
@@ -337,16 +454,16 @@ fn frame_of(style: &ResolvedStyle, palette: &Palette) -> egui::Frame {
     if let Some(bg) = style.bg {
         frame = frame.fill(color32(bg));
     }
-    if let Some(padding) = style.padding {
+    if let Some(padding) = padding_of(style) {
         frame = frame.inner_margin(margin(padding));
     }
-    if let Some(outer) = style.margin {
+    if let Some(outer) = margin_of(style) {
         frame = frame.outer_margin(margin(outer));
     }
     if let Some(r) = style.radius {
         frame = frame.corner_radius(radius(r));
     }
-    if let Some(width) = style.border_width {
+    if let Some(width) = border_of(style) {
         let color = style
             .border_color
             .unwrap_or_else(|| palette.get(Token::Border));
@@ -414,7 +531,16 @@ fn text_widget(
     if let Some(a) = style.text_align {
         label = label.halign(align_of(Some(a)));
     }
-    if style.truncate == Some(true) {
+    // `white-space: nowrap` — 줄바꿈하지 않는다.
+    if style.nowrap == Some(true) {
+        label = label.wrap_mode(egui::TextWrapMode::Extend);
+    }
+    // `text-overflow: ellipsis` / `truncate` / `max-lines`(egui는 줄 수 제한이
+    // 없어 잘라내기로 근사한다).
+    if style.truncate == Some(true)
+        || style.ellipsis == Some(true)
+        || style.max_lines.is_some_and(|n| n > 0)
+    {
         label = label.truncate();
     }
     ui.add(label)
@@ -472,11 +598,19 @@ fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle, budget: Option<f32>) {
         _ => None,
     };
 
-    let (w, h) = if horizontal {
+    let (mut w, mut h) = if horizontal {
         (main, cross)
     } else {
         (cross, main)
     };
+    // `aspect-ratio` — 한 축이 정해지면 다른 축을 비율로 채운다.
+    if let Some(r) = style.aspect_ratio.filter(|r| *r > 0.0) {
+        match (w, h) {
+            (Some(wv), None) => h = Some(wv / r),
+            (None, Some(hv)) => w = Some(hv * r),
+            _ => {}
+        }
+    }
     // `max-*`는 예산까지 포함해 상한을 건다 — `set_height(예산)` 뒤에
     // `set_max_height(40)`을 부르면 egui가 `min <= max`라 상한을 무시했다(버그 B6).
     match w.map(|v| clamp_axis(v, style.min_width, style.max_width)) {
@@ -528,7 +662,7 @@ fn edges_main(edges: Option<Edges>, horizontal: bool) -> f32 {
 
 /// `padding`의 주축 합 (가로면 좌우, 세로면 상하).
 fn padding_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
-    edges_main(style.padding, horizontal)
+    edges_main(padding_of(style), horizontal)
 }
 
 /// `margin`의 주축 합.
@@ -537,12 +671,12 @@ fn padding_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
 /// 리프 위젯은 `margin`이 무시됐다(버그 B5). 이제 리프도 바깥 여백 프레임을
 /// 쓰므로 예산 계산에도 같은 마진을 더한다.
 fn margin_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
-    edges_main(style.margin, horizontal)
+    edges_main(margin_of(style), horizontal)
 }
 
-/// `border-width`가 주축 양쪽에 더하는 두께 (egui `Frame`은 stroke를 크기에 포함한다).
+/// 테두리가 주축 양쪽에 더하는 두께 (egui `Frame`은 stroke를 크기에 포함한다).
 fn border_main(style: &ResolvedStyle, _horizontal: bool) -> f32 {
-    style.border_width.unwrap_or(0.0).max(0.0) * 2.0
+    border_of(style).unwrap_or(0.0).max(0.0) * 2.0
 }
 
 /// `intrinsic_main`과 같은 규칙으로 확정 스타일만 구한다.
@@ -623,9 +757,14 @@ fn intrinsic_main(walk: &Walk<'_>, ui: &egui::Ui, el: &Element, horizontal: bool
         _ => {}
     }
 
+    // `flex-grow`가 있으면 부모 주축의 남는 공간을 받는 가변 자식이다.
+    if style.flex_grow.unwrap_or(0.0) > 0.0 {
+        return None;
+    }
+
     // 구분선: `border-width`가 곧 두께다 (그려지는 방향과 무관하게 주축 두께).
     if let Element::Divider(_) = el {
-        return Some(style.border_width.unwrap_or(0.0).max(0.0) + margin);
+        return Some(border_of(&style).unwrap_or(0.0).max(0.0) + margin);
     }
     // 스피너: `width`(또는 `font-size`)만큼 정사각.
     if let Element::Spinner(_) = el {
@@ -762,17 +901,32 @@ fn child_budgets(
         .filter_map(|(i, v)| v.is_none().then_some(i))
         .collect();
     let mut free = remaining;
-    // 가변 자식에게 남은 공간을 균등 분배하되, `max-*` 상한이나 `min-*` 하한에
+    // `flex-grow` 가중치 — 선언이 없으면 1(균등), `fill`과 같은 기본.
+    let weight = |i: usize| -> f32 {
+        resolve_style(walk, &children[i])
+            .flex_grow
+            .unwrap_or(1.0)
+            .max(0.0)
+    };
+    // 가변 자식에게 남은 공간을 가중 분배하되, `max-*` 상한이나 `min-*` 하한에
     // 닿은 자식은 확정하고 남은 공간을 다시 나눈다 — 예전에는 균등 분배만 해서
     // `height: fill; max-height: 40` 형제가 남긴 공간을 아무도 못 먹었다.
     while !open.is_empty() {
-        let share = free / open.len() as f32;
+        let total_w: f32 = open.iter().map(|&i| weight(i)).sum();
+        let share_of = |i: usize, free: f32| -> f32 {
+            if total_w > 0.0 {
+                free * weight(i) / total_w
+            } else {
+                free / open.len() as f32
+            }
+        };
         let mut capped: Vec<usize> = Vec::new();
         let mut stay: Vec<usize> = Vec::new();
         for &i in &open {
             let s = resolve_style(walk, &children[i]);
             let lo = axis_min(&s, horizontal).unwrap_or(0.0);
             let hi = axis_max(&s, horizontal).unwrap_or(f32::INFINITY);
+            let share = share_of(i, free);
             if share > hi + 0.01 || share < lo - 0.01 {
                 capped.push(i);
             } else {
@@ -781,7 +935,7 @@ fn child_budgets(
         }
         if capped.is_empty() {
             for &i in &open {
-                budgets[i] = Some(share);
+                budgets[i] = Some(share_of(i, free));
             }
             break;
         }
@@ -789,6 +943,7 @@ fn child_budgets(
             let s = resolve_style(walk, &children[i]);
             let lo = axis_min(&s, horizontal).unwrap_or(0.0);
             let hi = axis_max(&s, horizontal).unwrap_or(f32::INFINITY);
+            let share = share_of(i, free);
             let give = if share > hi + 0.01 { hi } else { lo };
             budgets[i] = Some(give);
             free = (free - give).max(0.0);
@@ -843,7 +998,9 @@ fn min_size(style: &ResolvedStyle) -> Option<egui::Vec2> {
 fn widget_size(ui: &egui::Ui, style: &ResolvedStyle, budget: Option<f32>) -> Option<egui::Vec2> {
     let mut size = min_size(style).unwrap_or(egui::Vec2::ZERO);
     let horizontal = ui.layout().main_dir().is_horizontal();
-    if style.width == Some(Len::Fill) {
+    // `flex-grow`는 부모 주축의 남는 공간을 받는다 (`width`/`height: fill`과 같다).
+    let grow = style.flex_grow.unwrap_or(0.0) > 0.0;
+    if style.width == Some(Len::Fill) || (grow && horizontal) {
         let v = if horizontal {
             budget
         } else {
@@ -853,7 +1010,7 @@ fn widget_size(ui: &egui::Ui, style: &ResolvedStyle, budget: Option<f32>) -> Opt
             size.x = size.x.max(v);
         }
     }
-    if style.height == Some(Len::Fill) {
+    if style.height == Some(Len::Fill) || (grow && !horizontal) {
         let v = if horizontal {
             Some(ui.available_height())
         } else {
@@ -884,7 +1041,7 @@ fn with_button_padding<R>(
     style: &ResolvedStyle,
     f: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let Some(padding) = style.padding else {
+    let Some(padding) = padding_of(style) else {
         return f(ui);
     };
     let saved = ui.spacing().button_padding;
@@ -901,8 +1058,8 @@ fn with_button_padding<R>(
 /// 적용되므로, 나중에 걸면 그 노드는 그대로 보이고 **뒤 형제가 투명해진다**).
 fn decorate(resp: egui::Response, style: &ResolvedStyle) -> egui::Response {
     match style.cursor {
-        Some(c) => resp.on_hover_cursor(cursor_of(c)),
-        None => resp,
+        Some(c) if interactive(style) => resp.on_hover_cursor(cursor_of(c)),
+        _ => resp,
     }
 }
 
@@ -955,6 +1112,50 @@ fn is_disabled(el: &Element) -> bool {
     el.is_disabled()
 }
 
+/// 노드 하나를 그리기 전에 거는 래퍼 — `opacity`/`visibility`, `scale`, `z-index`.
+///
+/// - `opacity`는 그리기 **전에** 노드 스코프에 건다 (egui는 이후 도형에만 적용한다).
+/// - `scale`은 노드 좌상단 기준 `with_visual_transform`으로 근사한다. egui의
+///   `TSTransform`에는 회전이 없어 `rotate`는 여기서 반영할 수 없다.
+/// - `z-index > 0`은 전경 레이어로 올린다 (egui `Order` 근사).
+fn scoped_node<R>(
+    ui: &mut egui::Ui,
+    style: &ResolvedStyle,
+    id: egui::Id,
+    opacity: Option<f32>,
+    f: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let paint = |ui: &mut egui::Ui| match opacity {
+        Some(o) => {
+            ui.scope(|ui| {
+                ui.set_opacity(o);
+                f(ui)
+            })
+            .inner
+        }
+        None => f(ui),
+    };
+    let scale = style
+        .scale
+        .filter(|s| *s > 0.0 && (*s - 1.0).abs() > f32::EPSILON);
+    let transformed = |ui: &mut egui::Ui| match scale {
+        Some(s) => {
+            let pivot = ui.next_widget_position();
+            let t = egui::emath::TSTransform::from_translation(pivot.to_vec2() * (1.0 - s))
+                * egui::emath::TSTransform::from_scaling(s);
+            ui.with_visual_transform(t, paint).inner
+        }
+        None => paint(ui),
+    };
+    if style.z_index.is_some_and(|z| z > 0) {
+        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new(("elm-z", id)));
+        ui.scope_builder(egui::UiBuilder::new().layer_id(layer), transformed)
+            .inner
+    } else {
+        transformed(ui)
+    }
+}
+
 /// 노드 하나를 그린다 — 스타일 해석(조상·상속·상태) → egui 반영 → 자식 재귀.
 fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena: &mut Arena) {
     let palette = walk.palette;
@@ -994,16 +1195,9 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
     } else {
         style.opacity
     };
-    let drawn = match opacity {
-        Some(o) => {
-            ui.scope(|ui| {
-                ui.set_opacity(o);
-                draw_body(walk, ui, el, arena, style, palette)
-            })
-            .inner
-        }
-        None => draw_body(walk, ui, el, arena, style, palette),
-    };
+    let drawn = scoped_node(ui, &style, id, opacity, |ui| {
+        draw_body(walk, ui, el, arena, style, palette)
+    });
 
     walk.inherited.pop();
     walk.ancestors.remove(0);
@@ -1042,7 +1236,7 @@ fn draw_body<'a>(
     style: ResolvedStyle,
     palette: &Palette,
 ) -> Drawn {
-    match style.margin {
+    match margin_of(&style) {
         Some(outer) if needs_margin_frame(el) => {
             egui::Frame::NONE
                 .outer_margin(margin(outer))
@@ -1157,7 +1351,7 @@ fn draw_body_inner<'a>(
             if let Some(size) = widget_size(ui, &style, walk.main_budget) {
                 button = button.min_size(size);
             }
-            if let Some(width) = style.border_width {
+            if let Some(width) = border_of(&style) {
                 let c = style
                     .border_color
                     .unwrap_or_else(|| palette.get(Token::Border));
@@ -1167,7 +1361,7 @@ fn draw_body_inner<'a>(
             let resp = with_button_padding(ui, &style, |ui| ui.add_enabled(!disabled, button));
 
             let resp = decorate(resp, &style);
-            if resp.clicked() {
+            if resp.clicked() && interactive(&style) {
                 if let Some(h) = on_click {
                     h(arena);
                 }
@@ -1193,7 +1387,7 @@ fn draw_body_inner<'a>(
             if let Some(size) = widget_size(ui, &style, walk.main_budget) {
                 button = button.min_size(size);
             }
-            if let Some(width) = style.border_width {
+            if let Some(width) = border_of(&style) {
                 let c = style
                     .border_color
                     .unwrap_or_else(|| palette.get(Token::Border));
@@ -1201,7 +1395,7 @@ fn draw_body_inner<'a>(
             }
             let resp = with_button_padding(ui, &style, |ui| ui.add(button));
             let resp = decorate(resp, &style);
-            if resp.clicked() {
+            if resp.clicked() && interactive(&style) {
                 if let Some(h) = on_click {
                     h(arena);
                 }
@@ -1223,7 +1417,7 @@ fn draw_body_inner<'a>(
             let resp = ui.add(button);
 
             let resp = decorate(resp, &style);
-            if resp.clicked() {
+            if resp.clicked() && interactive(&style) {
                 if let Some(h) = on_click {
                     h(arena);
                 }
@@ -1325,7 +1519,7 @@ fn draw_body_inner<'a>(
         }) => {
             let mut value = *checked;
             let resp = ui.checkbox(&mut value, rich(label, &style, false));
-            if resp.changed() {
+            if resp.changed() && interactive(&style) {
                 if let Some(h) = on_change {
                     h(arena, value);
                 }
@@ -1387,6 +1581,12 @@ fn container<'a>(
     on_click: Option<&dyn Fn(&mut Arena)>,
 ) -> Drawn {
     let palette = walk.palette;
+    // `flex-direction`이 축을 뒤집는다 (`Row`에 `column`, `Col`에 `row`).
+    let vertical = match style.direction {
+        Some(Direction::Column) => true,
+        Some(Direction::Row) => false,
+        None => vertical,
+    };
     let horizontal = !vertical;
     let gap = if vertical {
         style.row_gap()
@@ -1394,57 +1594,92 @@ fn container<'a>(
         style.column_gap()
     };
     let inner = frame_of(style, palette).show(ui, |ui| {
-        if let Some(gap) = gap {
-            if vertical {
-                ui.spacing_mut().item_spacing.y = gap;
-            } else {
-                ui.spacing_mut().item_spacing.x = gap;
-                // `wrap` 줄바꿈 뒤 줄 간격도 gap을 따른다 (버그 B7 — 예전에는
-                // 가로 간격만 설정해 줄 사이가 0이었다).
-                if style.wrap == Some(true) {
+        // `overflow: hidden/scroll/auto` — 넘치는 자식을 컨테이너 안으로 자른다.
+        if clips_children(style) {
+            ui.set_clip_rect(ui.max_rect());
+        }
+        let mut render_children = |walk: &mut Walk<'a>, ui: &mut egui::Ui| {
+            if let Some(gap) = gap {
+                if vertical {
                     ui.spacing_mut().item_spacing.y = gap;
+                } else {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    // `wrap` 줄바꿈 뒤 줄 간격도 gap을 따른다 (버그 B7 — 예전에는
+                    // 가로 간격만 설정해 줄 사이가 0이었다).
+                    if style.wrap == Some(true) {
+                        ui.spacing_mut().item_spacing.y = gap;
+                    }
                 }
             }
-        }
-        apply_size(ui, style, walk.main_budget);
-        // 뒤 형제의 몫을 예약한 주축 예산 + 주축에 남는 공간(정렬용)
-        let (budgets, extra) = child_budgets(walk, ui, children, horizontal, gap.unwrap_or(0.0));
-        ui.with_layout(layout_of(style, vertical), |ui| {
-            // `justify: center/end` — 남는 공간을 **앞에** 넣는다.
-            // (egui의 `Layout::main_align`은 자식 배치에 쓰이지 않아 0.7.4에는 무효였다.)
-            let lead = match style.justify {
-                Some(StyleAlign::Center) => extra / 2.0,
-                Some(StyleAlign::End) => extra,
-                _ => 0.0,
-            };
-            // egui는 앞 여백 **뒤에** item_spacing(선언한 gap)을 한 번 더 넣는다.
-            // 고정 오프셋을 그대로 쓰면 실제 위치가 gap만큼 밀리므로(실측 200→204)
-            // 프레임워크가 더한 변화량을 빼서 보정한다.
-            let spacing = if horizontal {
-                ui.spacing().item_spacing.x
-            } else {
-                ui.spacing().item_spacing.y
-            };
-            let lead = (lead - spacing).max(0.0);
-            if lead > 0.0 {
-                let space = if horizontal {
-                    egui::vec2(lead, 0.0)
-                } else {
-                    egui::vec2(0.0, lead)
+            apply_size(ui, style, walk.main_budget);
+            // 뒤 형제의 몫을 예약한 주축 예산 + 주축에 남는 공간(정렬용)
+            let (budgets, extra) =
+                child_budgets(walk, ui, children, horizontal, gap.unwrap_or(0.0));
+            ui.with_layout(layout_of(style, vertical), |ui| {
+                // `justify: center/end` — 남는 공간을 **앞에** 넣는다.
+                // (egui의 `Layout::main_align`은 자식 배치에 쓰이지 않아 0.7.4에는 무효였다.)
+                let lead = match style.justify {
+                    Some(StyleAlign::Center) => extra / 2.0,
+                    Some(StyleAlign::End) => extra,
+                    _ => 0.0,
                 };
-                ui.allocate_space(space);
-            }
-            for (child, budget) in children.iter().zip(budgets) {
-                let saved = walk.main_budget;
-                walk.main_budget = budget;
-                render_el(walk, ui, child, arena);
-                walk.main_budget = saved;
-            }
-        });
+                // egui는 앞 여백 **뒤에** item_spacing(선언한 gap)을 한 번 더 넣는다.
+                // 고정 오프셋을 그대로 쓰면 실제 위치가 gap만큼 밀리므로(실측 200→204)
+                // 프레임워크가 더한 변화량을 빼서 보정한다.
+                let spacing = if horizontal {
+                    ui.spacing().item_spacing.x
+                } else {
+                    ui.spacing().item_spacing.y
+                };
+                let lead = (lead - spacing).max(0.0);
+                if lead > 0.0 {
+                    let space = if horizontal {
+                        egui::vec2(lead, 0.0)
+                    } else {
+                        egui::vec2(0.0, lead)
+                    };
+                    ui.allocate_space(space);
+                }
+                for (child, budget) in children.iter().zip(budgets) {
+                    let child_style = resolve_style(walk, child);
+                    let saved = walk.main_budget;
+                    walk.main_budget = budget;
+                    match child_style.align_self {
+                        // `align-self` — 이 자식만 교차축 정렬을 바꾼다. egui의 교차축
+                        // 정렬은 컨테이너 전역이라 자식 스코프로 우회한다.
+                        Some(a) => {
+                            let cross = align_of(Some(a));
+                            let layout = if horizontal {
+                                egui::Layout::left_to_right(cross).with_cross_justify(true)
+                            } else {
+                                egui::Layout::top_down(cross)
+                            };
+                            ui.scope_builder(egui::UiBuilder::new().layout(layout), |ui| {
+                                render_el(walk, ui, child, arena)
+                            });
+                        }
+                        None => render_el(walk, ui, child, arena),
+                    }
+                    walk.main_budget = saved;
+                }
+            });
+        };
+        // `overflow: scroll/auto` — 주축 방향 스크롤 영역을 만든다.
+        if scrolls_children(style) {
+            let area = if vertical {
+                egui::ScrollArea::vertical()
+            } else {
+                egui::ScrollArea::horizontal()
+            };
+            area.auto_shrink([false, false])
+                .show(ui, |ui| render_children(walk, ui));
+        } else {
+            render_children(walk, ui);
+        }
     });
     if let Some(h) = on_click {
         let resp = ui.interact(inner.response.rect, inner.response.id, egui::Sense::click());
-        if resp.clicked() {
+        if resp.clicked() && interactive(style) {
             h(arena);
         }
     }
@@ -1456,7 +1691,7 @@ fn container<'a>(
 /// 리셋 전에는 egui 기본 separator 스타일이 있었고, `border-*`를 선언해도 그대로였다.
 /// `border-width`가 없으면 두께 0이라 아무 자리도 차지하지 않는다.
 fn divider(ui: &mut egui::Ui, style: &ResolvedStyle, palette: &Palette) -> egui::Response {
-    let thickness = style.border_width.unwrap_or(0.0).max(0.0);
+    let thickness = border_of(style).unwrap_or(0.0).max(0.0);
     let color = color32(
         style
             .border_color

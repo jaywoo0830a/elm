@@ -30,8 +30,21 @@
 - `<> … </>` — 레이아웃 없는 프래그먼트 (본문/조건/반복 안쪽 어디서나).
 - 제어 흐름 태그는 **레이아웃 노드를 만들지 않는다** — 감싼 자식이 그대로 트리에 나온다.
   기존 `{if …}` / `{items.map(…)}` 문법과 공존한다 (추가 중심).
+- `css!` 확장 속성 26종 (총 62종) — `flex-direction` `flex-grow` `flex-shrink`
+  `align-self` `overflow` `aspect-ratio` `z-index`, 개별 `padding-*`/`margin-*`,
+  `border-style`/`border-*-width`, `white-space` `text-overflow` `max-lines`,
+  `rotate` `scale` `pointer-events`. `padding: 8; padding-left: 4`처럼 숏핸드와
+  개별 값이 함께 산다. `crates/elm-magic-macros` 쪽도 대응하는 `Kind`/검증을 갖는다.
+- egui 어댑터가 확장 속성을 그린다 — 위 목록 + (`border-style: dashed/dotted`는
+  실선, 개별 `border-*-width`는 최댓값, `max-lines`는 잘라내기, `scale`은 좌상단
+  기준 시각 변환, `z-index > 0`은 전경 레이어로 근사. `rotate`는 egui
+  `TSTransform`에 회전이 없어 미반영).
 
 ### Fixed
+
+- `crates/elm-magic-egui/tests/elm_wrap_tests.rs`가 `eframe`을 import해 컴파일이
+  안 되던 문제(이 크레이트의 의존성은 `egui`뿐). `egui::` 경로만 쓴다.
+- wrap/fill 재현 테스트의 이름과 헤더 표가 실제 관측(1a는 정상 wrap)과 어긋나던 것.
 
 - `view!` 파라미터 타입 직렬화가 토큰별 `to_string()`+공백 결합이라
   `Vec<elm_magic::Element>`가 `Vec < elm_magic : : Element>`로,
