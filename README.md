@@ -38,14 +38,16 @@ fn counter_increments() {
 }
 ```
 
-## 조건/반복 (0.8 개발 중)
+## 조건/반복 + `IntoView` (0.8 개발 중)
 
-0.8.0은 화면 본문의 조건/반복을 태그로 쓴다 — 레이아웃 노드를 만들지 않는다.
+0.8은 화면 본문의 조건/반복을 태그로 쓰고, children 자리의 중괄호에 값을 바로 넘긴다 —
+제어 흐름 태그는 레이아웃 노드를 만들지 않는다.
 
 ```rust
 elm_magic::view! {
-    fn TodoList(items: Vec<Todo> = vec![], filter: Filter = Filter::All) {
+    fn TodoList(items: Vec<Todo> = vec![], filter: Filter = Filter::All, draft: String = String::new()) {
         <Col>
+            {draft}                      // String → 텍스트
             <If when={items.is_empty()}>
                 <Text class="muted">"항목 없음"</Text>
             </If>
@@ -66,7 +68,9 @@ elm_magic::view! {
 }
 ```
 
-기존 `{if …}` / `{items.map(…)}` 문법은 그대로 동작한다. 계약 테스트는
+`{expr}`은 `IntoView`를 구현한 값을 그린다 — `&str`/`String`/숫자/`bool`은 텍스트,
+`Element`는 그대로, `Option<T>`는 `None`이면 아무것도 안 그리고, `Vec<T>`/이터레이터는
+펼쳐진다. 기존 `{if …}` / `{items.map(…)}` 문법은 그대로 동작한다. 계약 테스트는
 `tests/0.8/`(`cargo test --test v0_8_if_else` 등)에 있다.
 
 ## 스타일 — `css!`

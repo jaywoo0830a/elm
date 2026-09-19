@@ -1,7 +1,7 @@
-# 0.8.0 테스트 — 조건/반복 (구현 완료)
+# 0.8.x 테스트 — 조건/반복 + `IntoView`
 
-`0.8.0`의 구현 범위는 **조건/반복**뿐이다 (`0.8-preview.md` §0의 단계 1 "문법 팩" 중
-제어 흐름 태그). 이 디렉터리의 테스트가 그 계약이며, 현재 **전부 green**이다
+`0.8.0`은 **조건/반복**, `0.8.x`는 이어서 **`IntoView`**(`0.8-preview.md` §3.2)를
+구현했다. 이 디렉터리의 테스트가 그 계약이며, 현재 **전부 green**이다
 (`cargo test -p elm-magic`).
 
 > 디렉터리 이름이 `0.8`이라 Rust 크레이트 이름으로 쓸 수 없어, 각 파일은 루트
@@ -15,6 +15,7 @@
 | `<For each={..} as={..} key={..}>` | `for_loop.rs` | 위치 기반/keyed 반복, 이터레이터, 빈 목록, 삭제 |
 | `<Switch on={..}>` / `<Case when={..}>` / `<Default>` | `switch.rs` | 패턴 분기, Default 생략 시 미렌더, 상태 변화 반영 |
 | `<> … </>` | `fragment.rs` | 레이아웃 래퍼 없이 자식 묶기 |
+| `{expr}` → `IntoView` | `into_view.rs` | `&str`/`String`/숫자/`bool` 텍스트, `Element`, `Option<T>`, `Vec<T>`, `Iterator<Item = T>` |
 | (호환) | `interop.rs` | 기존 `{if}` / `.map()` 문법과 동일 결과 |
 
 ## 판정 기준 (acceptance)
@@ -25,6 +26,8 @@
   (keyed 자식 상태가 키를 따라가고, 위치 기반은 따라가지 않음을 검증).
 - `as={t}`로 바인딩한 아이템은 본문(자식 태그/이벤트 핸들러/문자열 보간)에서 쓸 수 있다.
 - `<Switch>`의 `when={..}`은 **패턴**이다 (`Status::Failed(e)` 바인딩 허용).
+- `{expr}`은 `IntoView`를 구현한 값이면 그린다. `IntoIterator`면 펼치고, 아니면 한
+  엘리먼트로 그린다 (`&str`/`String`/숫자/`bool` → 텍스트, `Option::None` → 미렌더).
 - 기존 0.7 문법은 그대로 동작한다 (추가 중심).
 
 ## 실행
@@ -34,17 +37,21 @@ cargo test --test v0_8_if_else
 cargo test --test v0_8_for_loop
 cargo test --test v0_8_switch
 cargo test --test v0_8_fragment
+cargo test --test v0_8_into_view
 cargo test --test v0_8_interop
 
 # 전체 (기본 스위트 포함)
 cargo test -p elm-magic
 ```
 
-0.8.0에서 다루지 않는 `IntoView`(§3.2), `bind`(§3.3), `cls!`(§3.5), `style!`(§3.6),
+0.8.x에서 다루지 않는 `bind`(§3.3), `cls!`(§3.5), `style!`(§3.6), `?.`/`|>`(§3.4),
 `<Await>`(§4.2), `widgets!`/`Bridge`(§6)는 후속 버전 테스트로 남긴다.
 
 ## 구현 위치
 
-`crates/elm-magic-macros/src/jsx.rs` — `is_control_tag`/`emit_control`(`emit_if`,
-`emit_for`, `emit_switch`)/`parse_fragment`와 `scan_tag_children`·`scan_named_block`
-스캐너. 새 태그는 `Vec<Element>`를 내보내 `IntoElements`가 그대로 평탄화한다.
+- `crates/elm-magic-macros/src/jsx.rs` — `is_control_tag`/`emit_control`(`emit_if`,
+  `emit_for`, `emit_switch`)/`parse_fragment`, 스캐너, children 빌더의 `push_view!`.
+- `src/element.rs` — `IntoView`와 autoref 특수화(`push_view!`가 `IntoIterator`면
+  펼치고 아니면 `IntoView`로 그림).
+- `crates/elm-magic-macros/src/view.rs` — 파라미터 타입을 `render_tokens`로 직렬화
+  (`Vec<elm_magic::Element>`, `&'static str` 같은 타입이 깨지지 않게).

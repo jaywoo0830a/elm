@@ -238,13 +238,7 @@ fn expand_fn(
                         type_toks.push(p[k].clone());
                         k += 1;
                     }
-                    ty = Some(
-                        type_toks
-                            .iter()
-                            .map(|t| t.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
+                    ty = Some(render_tokens(&type_toks));
                 }
             }
         }

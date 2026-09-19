@@ -72,6 +72,10 @@ path = "tests/0.8/fragment.rs"
 name = "v0_8_interop"
 path = "tests/0.8/interop.rs"
 
+[[test]]
+name = "v0_8_into_view"
+path = "tests/0.8/into_view.rs"
+
 [package.metadata.docs.rs]
 # 선택 기능(`serde`)까지 문서화한다 — `Element: Serialize`가 docs.rs에 보이도록.
 all-features = true

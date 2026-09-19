@@ -889,7 +889,7 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                 code.push(' ');
             } else {
                 code.push_str(&format!(
-                    "__elm_children.extend(::elm_magic::IntoElements::into_elements({})); ",
+                    "::elm_magic::push_view!(&mut __elm_children, {}); ",
                     piece
                 ));
             }

@@ -116,7 +116,9 @@ macro_rules! sel {
     };
 }
 
-pub use element::{Callback, Element, IntoElement, IntoElements};
+#[doc(hidden)]
+pub use element::__view_specialization;
+pub use element::{Callback, Element, IntoElement, IntoElements, IntoView};
 pub use state::{Arena, Ctx, FrameTail, State};
 
 /// 위젯 구조체들 — `Element`의 각 variant가 감싸는 타입.
@@ -209,7 +211,7 @@ where
 }
 
 pub mod prelude {
-    pub use crate::element::{Callback, Element, IntoElement, IntoElements};
+    pub use crate::element::{Callback, Element, IntoElement, IntoElements, IntoView};
     pub use crate::platform::{Headless, Platform};
     pub use crate::state::{Arena, Ctx, FrameTail, State};
     pub use crate::style;

@@ -150,3 +150,128 @@ impl IntoElement for Vec<Element> {
         Element::Fragment(FragmentEl { children: self })
     }
 }
+
+/// 뷰 자리의 값 → 단일 `Element` (0.8 `IntoView`, 사양서 §3.2).
+///
+/// children 자리의 `{expr}`은 이 트레이트를 통해 그려진다. `&str`·`String`·숫자·`bool`은
+/// 텍스트가 되고, `Element`는 그대로, `Option<T>`/`Vec<T>`/`Iterator<Item = T>`는 펼쳐진다.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}`는 화면에 그릴 수 없습니다",
+    label = "`IntoView`를 구현하거나 `.into_view()`를 쓰세요",
+    note = "그릴 수 있는 타입: &str, String, 숫자, bool, Element, Vec<T>, Option<T>, Iterator<Item = T>"
+)]
+pub trait IntoView {
+    fn into_view(self) -> Element;
+}
+
+/// `{expr}` 하나를 children에 추가하는 전개용 매크로 (0.8 `IntoView`).
+///
+/// - 값이 `IntoIterator`면 펼쳐서 넣는다 (`Vec<T>`, `Option<T>`, `Iterator<Item = T>`).
+/// - 아니면 `IntoView`로 그린다 (`&str`, `String`, 숫자, `bool`, `Element`).
+///
+/// 두 경우를 **메서드 해석(autoref)** 으로 고른다 — 하나의 트레이트에 `IntoIterator`
+/// 전개와 외부 스칼라 타입 impl을 함께 두면 coherence 충돌(E0119)이 나기 때문이다.
+#[macro_export]
+macro_rules! push_view {
+    ($out:expr, $value:expr) => {{
+        #[allow(unused_imports)]
+        use $crate::__view_specialization::{RenderList as _, RenderScalar as _};
+        $crate::__view_specialization::ViewTag($value).render_into($out)
+    }};
+}
+
+#[doc(hidden)]
+pub mod __view_specialization {
+    use super::{Element, IntoView};
+
+    /// 매크로가 값을 감싸는 태그.
+    pub struct ViewTag<T>(pub T);
+
+    /// `IntoIterator`인 값 → 펼쳐서 넣는다 (목록/이터레이터).
+    pub trait RenderList {
+        fn render_into(self, out: &mut Vec<Element>);
+    }
+
+    /// `IntoView`인 값 → 하나로 그려 넣는다 (스칼라/엘리먼트).
+    pub trait RenderScalar {
+        fn render_into(self, out: &mut Vec<Element>);
+    }
+
+    impl<T, U> RenderList for ViewTag<T>
+    where
+        T: IntoIterator<Item = U>,
+        U: IntoView,
+    {
+        fn render_into(self, out: &mut Vec<Element>) {
+            for item in self.0 {
+                item.into_view().push_into(out);
+            }
+        }
+    }
+
+    impl<T: IntoView + Clone> RenderScalar for &ViewTag<T> {
+        fn render_into(self, out: &mut Vec<Element>) {
+            self.0.clone().into_view().push_into(out);
+        }
+    }
+}
+
+impl Element {
+    /// `Fragment`면 자식들을, 아니면 자신을 `out`에 넣는다 (평탄화).
+    pub fn push_into(self, out: &mut Vec<Element>) {
+        match self {
+            Element::Fragment(f) => out.extend(f.children),
+            other => out.push(other),
+        }
+    }
+}
+
+fn text_view(text: String) -> Element {
+    Element::Text(crate::widget::TextEl {
+        text,
+        class: Vec::new(),
+    })
+}
+
+impl IntoView for Element {
+    fn into_view(self) -> Element {
+        self
+    }
+}
+
+impl IntoView for &str {
+    fn into_view(self) -> Element {
+        text_view(self.to_string())
+    }
+}
+
+impl IntoView for String {
+    fn into_view(self) -> Element {
+        text_view(self)
+    }
+}
+
+impl IntoView for &String {
+    fn into_view(self) -> Element {
+        text_view(self.clone())
+    }
+}
+
+impl IntoView for char {
+    fn into_view(self) -> Element {
+        text_view(self.to_string())
+    }
+}
+
+macro_rules! impl_into_view_for_display {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl IntoView for $t {
+                fn into_view(self) -> Element {
+                    text_view(self.to_string())
+                }
+            }
+        )*
+    };
+}
+impl_into_view_for_display!(bool, i8, i16, i32, i64, isize, u8, u16, u32, u64, usize, f32, f64);
