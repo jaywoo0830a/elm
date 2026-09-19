@@ -204,3 +204,22 @@ fn body_may_be_a_whole_conditional() {
     });
     app.assert_text("done");
 }
+
+// ── 같은 이름의 자기닫힘 자식 (버그 B1) ──────────────────────
+//
+// `<Col><Col /></Col>`에서 안쪽 자기닫힘 `<Col />`을 열린 태그로 세면 바깥
+// `</Col>`을 닫는 태그로 보지 못해 "unclosed tag" 컴파일 에러가 났다.
+elm_magic::view! {
+    fn NestedSelfClosing() {
+        <Col>
+            <Col />
+            <Col><Text>"inner"</Text></Col>
+        </Col>
+    }
+}
+
+#[test]
+fn nested_self_closing_same_tag_compiles_and_renders() {
+    let app = elm_magic::mount!(NestedSelfClosing);
+    app.assert_text("inner");
+}

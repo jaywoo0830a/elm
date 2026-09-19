@@ -425,58 +425,134 @@ fn text_widget(
 /// `budget`은 부모가 배분한 주축 크기다 — `fill`의 실제 값이 되고, 뒤 형제의 몫은
 /// 이미 빠져 있다. 선언한 `width/height`(px)가 있으면 그쪽이 이긴다.
 fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle, budget: Option<f32>) {
+    // 이 시점의 `ui.layout()`은 **부모의** 주축이다 — 부모가 배분한 `budget`도 그
+    // 축의 값이다. 그래서 예산은 주축에만 적용하고, 교차축의 `fill`은 여기서 따로
+    // 계산한다(예전에는 예산이 있으면 교차축 `fill`이 통째로 무시됐다).
     let horizontal = ui.layout().main_dir().is_horizontal();
-    if let Some(b) = budget.filter(|b| b.is_finite()) {
-        if horizontal {
-            ui.set_width(b);
-        } else {
-            ui.set_height(b);
+    let declared_main = if horizontal {
+        style.width
+    } else {
+        style.height
+    };
+    let declared_cross = if horizontal {
+        style.height
+    } else {
+        style.width
+    };
+
+    let main = match declared_main {
+        // 선언한 px가 예산보다 우선한다.
+        Some(Len::Px(v)) => Some(v),
+        _ => match budget.filter(|b| b.is_finite()) {
+            Some(b) => Some(b),
+            // 예산이 없을 때만 남은 공간을 `fill`로 쓴다 (루트 요소 등).
+            None => match declared_main {
+                Some(Len::Fill) => {
+                    let available = if horizontal {
+                        ui.available_width()
+                    } else {
+                        ui.available_height()
+                    };
+                    available.is_finite().then_some(available)
+                }
+                _ => None,
+            },
+        },
+    };
+    let cross = match declared_cross {
+        Some(Len::Px(v)) => Some(v),
+        Some(Len::Fill) => {
+            let available = if horizontal {
+                ui.available_height()
+            } else {
+                ui.available_width()
+            };
+            available.is_finite().then_some(available)
         }
-    }
-    match style.width {
-        Some(Len::Px(v)) => ui.set_width(v),
-        // `fill`은 부모가 배분한 예산이 없을 때만 남은 폭을 쓴다 (루트 요소 등)
-        Some(Len::Fill) if budget.is_none() => {
-            let available = ui.available_width();
-            if available.is_finite() {
-                ui.set_width(available);
+        _ => None,
+    };
+
+    let (w, h) = if horizontal {
+        (main, cross)
+    } else {
+        (cross, main)
+    };
+    // `max-*`는 예산까지 포함해 상한을 건다 — `set_height(예산)` 뒤에
+    // `set_max_height(40)`을 부르면 egui가 `min <= max`라 상한을 무시했다(버그 B6).
+    match w.map(|v| clamp_axis(v, style.min_width, style.max_width)) {
+        Some(v) => ui.set_width(v),
+        None => {
+            if let Some(v) = style.min_width {
+                ui.set_min_width(v);
+            }
+            if let Some(v) = style.max_width {
+                ui.set_max_width(v);
             }
         }
-        _ => {}
     }
-    match style.height {
-        Some(Len::Px(v)) => ui.set_height(v),
-        Some(Len::Fill) if budget.is_none() => {
-            let available = ui.available_height();
-            if available.is_finite() {
-                ui.set_height(available);
+    match h.map(|v| clamp_axis(v, style.min_height, style.max_height)) {
+        Some(v) => ui.set_height(v),
+        None => {
+            if let Some(v) = style.min_height {
+                ui.set_min_height(v);
+            }
+            if let Some(v) = style.max_height {
+                ui.set_max_height(v);
             }
         }
-        _ => {}
     }
-    if let Some(v) = style.min_width {
-        ui.set_min_width(v);
+}
+
+/// 한 축 길이를 `min-*`/`max-*`로 확정한다 (`max`가 `min`보다 우선).
+fn clamp_axis(desired: f32, min: Option<f32>, max: Option<f32>) -> f32 {
+    let mut v = desired;
+    if let Some(m) = min {
+        v = v.max(m);
     }
-    if let Some(v) = style.min_height {
-        ui.set_min_height(v);
+    if let Some(m) = max {
+        v = v.min(m);
     }
-    if let Some(v) = style.max_width {
-        ui.set_max_width(v);
-    }
-    if let Some(v) = style.max_height {
-        ui.set_max_height(v);
-    }
+    v.max(0.0)
 }
 
 // ─ 주축 크기 측정 (fill 배분용) ──────────────────────────────
 
-/// `padding`의 주축 합 (가로면 좌우, 세로면 상하).
-fn padding_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
-    match style.padding {
-        Some(p) if horizontal => p.left + p.right,
-        Some(p) => p.top + p.bottom,
+/// `Edges`의 주축 합 (가로면 좌우, 세로면 상하).
+fn edges_main(edges: Option<Edges>, horizontal: bool) -> f32 {
+    match edges {
+        Some(e) if horizontal => e.left + e.right,
+        Some(e) => e.top + e.bottom,
         None => 0.0,
     }
+}
+
+/// `padding`의 주축 합 (가로면 좌우, 세로면 상하).
+fn padding_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
+    edges_main(style.padding, horizontal)
+}
+
+/// `margin`의 주축 합.
+///
+/// 컨테이너는 `Frame`의 `outer_margin`으로 이미 자리를 예약하지만, Button 같은
+/// 리프 위젯은 `margin`이 무시됐다(버그 B5). 이제 리프도 바깥 여백 프레임을
+/// 쓰므로 예산 계산에도 같은 마진을 더한다.
+fn margin_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
+    edges_main(style.margin, horizontal)
+}
+
+/// `border-width`가 주축 양쪽에 더하는 두께 (egui `Frame`은 stroke를 크기에 포함한다).
+fn border_main(style: &ResolvedStyle, _horizontal: bool) -> f32 {
+    style.border_width.unwrap_or(0.0).max(0.0) * 2.0
+}
+
+/// `intrinsic_main`과 같은 규칙으로 확정 스타일만 구한다.
+fn resolve_style(walk: &Walk<'_>, el: &Element) -> ResolvedStyle {
+    el.resolved_style_in(
+        &walk.ancestors,
+        State::new(false, false, false, el.is_disabled()),
+        walk.parent_style(),
+        walk.palette,
+    )
 }
 
 /// 텍스트의 실제 크기(주축 방향) — egui 폰트로 잰다 (선언한 크기·스타일 반영).
@@ -503,98 +579,143 @@ fn text_extent(
     }
 }
 
-/// 위젯 하나의 **주축 방향 고정 크기** 추정. `None` = 가변(fill/justify).
+/// 위젯 하나의 **주축 방향 고정 크기** 추정. `None` = 가변(fill/justify/입력의 폭).
 ///
-/// 정확한 값이 필요한 게 아니다 — 뒤 형제의 몫을 **예약**하고 남는 폭을 가변
-/// 자식에게 나눠주기 위한 근사치다 (버그 3: `width: fill`이 형제 자리를 먹던 문제).
+/// `horizontal`은 **부모의 주축**이다. 컨테이너는 자기 주축이 부모와 같으면
+/// 자식들을 주축 방향으로 **합**하고, 다르면(= 부모가 교차축을 잰다) 자식들의
+/// **최댓값**을 쓴다 — 예전에는 항상 자기 주축으로만 재서 `Col` 안의 `Row` 형제가
+/// 높이 대신 폭을 예산에 넣었다(버그 B2 · S02/S04/S26).
 fn intrinsic_main(walk: &Walk<'_>, ui: &egui::Ui, el: &Element, horizontal: bool) -> Option<f32> {
-    let style = el.resolved_style_in(
-        &walk.ancestors,
-        State::new(false, false, false, el.is_disabled()),
-        walk.parent_style(),
-        walk.palette,
-    );
+    let style = resolve_style(walk, el);
     if style.is_display_none() {
         return Some(0.0);
     }
-    match if horizontal {
+
+    let declared = if horizontal {
         style.width
     } else {
         style.height
-    } {
-        Some(Len::Px(v)) => return Some(v + padding_main(&style, horizontal)),
+    };
+    let floor = axis_min(&style, horizontal);
+    let ceil = axis_max(&style, horizontal);
+    let pad = padding_main(&style, horizontal);
+    let border = border_main(&style, horizontal);
+    let margin = margin_main(&style, horizontal);
+
+    // 내용 상자(content-box)를 마진까지 포함한 외곽 크기로 바꾼다.
+    // `min-*`는 하한, `max-*`는 상한이다 (max가 min보다 우선).
+    let finish = |content: f32| -> f32 {
+        let mut v = content + pad + border;
+        if let Some(f) = floor {
+            v = v.max(f);
+        }
+        if let Some(c) = ceil {
+            v = v.min(c);
+        }
+        v + margin
+    };
+
+    match declared {
+        // 선언한 px가 있으면 그쪽이 이긴다.
+        Some(Len::Px(v)) => return Some(finish(v)),
+        // `fill`은 부모 예산을 받아야 하므로 가변.
         Some(Len::Fill) => return None,
         _ => {}
     }
+
+    // 구분선: `border-width`가 곧 두께다 (그려지는 방향과 무관하게 주축 두께).
+    if let Element::Divider(_) = el {
+        return Some(style.border_width.unwrap_or(0.0).max(0.0) + margin);
+    }
+    // 스피너: `width`(또는 `font-size`)만큼 정사각.
+    if let Element::Spinner(_) = el {
+        let size = match style.width {
+            Some(Len::Px(v)) => v,
+            _ => style.font_size.unwrap_or(BASE_FONT_SIZE),
+        };
+        return Some(size + margin);
+    }
+    // 진행 막대: 폭은 채우고, 높이만 선언/기본값으로 예약한다.
+    if let Element::Progress(_) = el {
+        if horizontal {
+            return None;
+        }
+        let h = match style.height {
+            Some(Len::Px(v)) => v,
+            _ => style.min_height.unwrap_or(8.0),
+        };
+        return Some(h + margin);
+    }
+
     // `justify`가 있는 컨테이너는 남는 공간을 받아야 정렬이 의미를 갖는다 (버그 2).
     // 가로 주축에서만 자동 확장한다 — 세로는 남은 높이가 패널 전체라 위험하다.
     if horizontal && matches!(el, Element::Col(_) | Element::Row(_)) && style.justify.is_some() {
         return None;
     }
-    // `min-*`는 하한이다 (`.mid { min-height: 20 }` 같은 선언이 크기를 만든다)
-    let floor = if horizontal {
-        style.min_width
-    } else {
-        style.min_height
-    }
-    .unwrap_or(0.0);
-    let inline = |w: f32| Some(w.max(floor) + padding_main(&style, horizontal));
-    let pad = padding_main(&style, horizontal);
+
     let text = |text: &str, bold: bool| text_extent(ui, text, &style, bold, horizontal);
-    match el {
-        Element::Text(TextEl { text: t, .. }) | Element::Td(TdEl { text: t, .. }) => {
-            inline(text(t, false))
-        }
+    let content: Option<f32> = match el {
+        Element::Text(TextEl { text: t, .. })
+        | Element::Td(TdEl { text: t, .. })
+        | Element::Banner(BannerEl { text: t, .. }) => Some(text(t, false)),
         Element::Strong(StrongEl { text: t, .. }) | Element::Th(ThEl { text: t, .. }) => {
-            inline(text(t, true) + pad)
+            Some(text(t, true))
         }
-        Element::Banner(BannerEl { text: t, .. }) => inline(text(t, false)),
-        Element::Button(ButtonEl { text: t, .. }) => {
-            // 테두리는 주축 양쪽에 붙는다
-            let bw = if horizontal {
-                style.border_width.unwrap_or(0.0) * 2.0
-            } else {
-                0.0
-            };
-            inline(text(t, false) + pad + bw)
-        }
-        Element::Tab(TabEl { text: t, .. }) => inline(text(t, false) + pad),
+        Element::Button(ButtonEl { text: t, .. }) => Some(text(t, false)),
+        Element::Tab(TabEl { text: t, .. }) => Some(text(t, false)),
         Element::Check(CheckEl { label, .. }) => {
             let icon = if horizontal {
                 ui.spacing().icon_width + ui.spacing().icon_spacing
             } else {
                 0.0
             };
-            inline(text(label, false) + icon)
+            Some(text(label, false) + icon)
         }
-        // 폭을 선언하지 않은 입력은 남는 공간을 쓴다 (`width: fill`과 같다)
-        Element::Input(_) | Element::TextArea(_) => None,
-        // 컨테이너: 자식들의 고정 크기 + 간격 (가변 자식은 0으로 본다)
+        // 입력은 **폭이 fill**(가변)이고 높이는 글자 높이다 — 세로에서 늘어나면 안 된다.
+        Element::Input(_) | Element::TextArea(_) => {
+            if horizontal {
+                None
+            } else {
+                Some(text(" ", false))
+            }
+        }
+        // 컨테이너: 부모의 주축이 자기 주축과 같으면 자식 합, 다르면 자식 최댓값.
         Element::Col(ColEl { children, .. }) | Element::Row(RowEl { children, .. }) => {
-            let child_horizontal = matches!(el, Element::Row(_));
-            let gap = if child_horizontal {
+            let container_horizontal = matches!(el, Element::Row(_));
+            let gap = if container_horizontal {
                 style.column_gap()
             } else {
                 style.row_gap()
             }
             .unwrap_or(0.0);
-            let mut total = 0.0;
-            for c in children {
-                total += intrinsic_main(walk, ui, c, child_horizontal).unwrap_or(0.0);
+            if container_horizontal == horizontal {
+                let mut total = 0.0;
+                for c in children {
+                    total += intrinsic_main(walk, ui, c, horizontal).unwrap_or(0.0);
+                }
+                total += gap * children.len().saturating_sub(1) as f32;
+                Some(total)
+            } else {
+                let mut max = 0.0f32;
+                for c in children {
+                    if let Some(v) = intrinsic_main(walk, ui, c, horizontal) {
+                        max = max.max(v);
+                    }
+                }
+                Some(max)
             }
-            total += gap * children.len().saturating_sub(1) as f32;
-            inline(total)
         }
         Element::Fragment(FragmentEl { children }) => {
             let mut total = 0.0;
             for c in children {
                 total += intrinsic_main(walk, ui, c, horizontal).unwrap_or(0.0);
             }
-            inline(total)
+            Some(total)
         }
         // 자리 없는 것들(0) — 오버레이/그림자는 레이아웃을 차지하지 않는다
-        _ => inline(0.0),
-    }
+        _ => Some(0.0),
+    };
+    content.map(finish)
 }
 
 /// 가변 자식(`fill` / `justify` 컨테이너 / 입력)에게 나눠줄 주축 크기와,
@@ -619,36 +740,90 @@ fn child_budgets(
         return (vec![None; children.len()], 0.0);
     }
     let mut fixed_total = 0.0f32;
-    let mut flexible = 0usize;
     let mut intrinsics = Vec::with_capacity(children.len());
     for c in children {
         let v = intrinsic_main(walk, ui, c, horizontal);
         match v {
             Some(v) => fixed_total += v,
-            None => flexible += 1,
+            None => {
+                // 가변 자식도 마진은 고정 오버헤드다 — 예산에서 미리 뺀다.
+                fixed_total += margin_main(&resolve_style(walk, c), horizontal);
+            }
         }
         intrinsics.push(v);
     }
     let gap_total = gap.max(0.0) * children.len().saturating_sub(1) as f32;
     let remaining = (available - fixed_total - gap_total).max(0.0);
-    let per = if flexible > 0 {
-        remaining / flexible as f32
-    } else {
-        0.0
-    };
-    let extra = if flexible > 0 { 0.0 } else { remaining };
-    let budgets = intrinsics
-        .into_iter()
-        .map(|v| if v.is_none() { Some(per) } else { None })
+
+    let mut budgets: Vec<Option<f32>> = intrinsics.iter().map(|_| None).collect();
+    let mut open: Vec<usize> = intrinsics
+        .iter()
+        .enumerate()
+        .filter_map(|(i, v)| v.is_none().then_some(i))
         .collect();
+    let mut free = remaining;
+    // 가변 자식에게 남은 공간을 균등 분배하되, `max-*` 상한이나 `min-*` 하한에
+    // 닿은 자식은 확정하고 남은 공간을 다시 나눈다 — 예전에는 균등 분배만 해서
+    // `height: fill; max-height: 40` 형제가 남긴 공간을 아무도 못 먹었다.
+    while !open.is_empty() {
+        let share = free / open.len() as f32;
+        let mut capped: Vec<usize> = Vec::new();
+        let mut stay: Vec<usize> = Vec::new();
+        for &i in &open {
+            let s = resolve_style(walk, &children[i]);
+            let lo = axis_min(&s, horizontal).unwrap_or(0.0);
+            let hi = axis_max(&s, horizontal).unwrap_or(f32::INFINITY);
+            if share > hi + 0.01 || share < lo - 0.01 {
+                capped.push(i);
+            } else {
+                stay.push(i);
+            }
+        }
+        if capped.is_empty() {
+            for &i in &open {
+                budgets[i] = Some(share);
+            }
+            break;
+        }
+        for &i in &capped {
+            let s = resolve_style(walk, &children[i]);
+            let lo = axis_min(&s, horizontal).unwrap_or(0.0);
+            let hi = axis_max(&s, horizontal).unwrap_or(f32::INFINITY);
+            let give = if share > hi + 0.01 { hi } else { lo };
+            budgets[i] = Some(give);
+            free = (free - give).max(0.0);
+        }
+        open = stay;
+    }
+    // 분배하고 남은 공간 — `justify`가 쓸 수 있다 (가변이 상한에 묶인 경우에도).
+    let used: f32 = budgets.iter().flatten().sum();
+    let extra = (remaining - used).max(0.0);
     (budgets, extra)
 }
 
-/// 위젯 최소 크기 (버튼) — `width`/`height`(또는 `min-height`)가 있을 때만.
+/// 한 축의 `min-*` (가로면 `min-width`).
+fn axis_min(style: &ResolvedStyle, horizontal: bool) -> Option<f32> {
+    if horizontal {
+        style.min_width
+    } else {
+        style.min_height
+    }
+}
+
+/// 한 축의 `max-*` (가로면 `max-width`).
+fn axis_max(style: &ResolvedStyle, horizontal: bool) -> Option<f32> {
+    if horizontal {
+        style.max_width
+    } else {
+        style.max_height
+    }
+}
+
+/// 위젯 최소 크기 (버튼) — `width`/`height`(또는 `min-*`)가 있을 때만.
 fn min_size(style: &ResolvedStyle) -> Option<egui::Vec2> {
     let w = match style.width {
         Some(Len::Px(v)) => v,
-        _ => 0.0,
+        _ => style.min_width.unwrap_or(0.0),
     };
     let h = match style.height {
         Some(Len::Px(v)) => v,
@@ -656,6 +831,43 @@ fn min_size(style: &ResolvedStyle) -> Option<egui::Vec2> {
     };
     if w > 0.0 || h > 0.0 {
         Some(egui::vec2(w, h))
+    } else {
+        None
+    }
+}
+
+/// 버튼 계열 위젯의 크기 — 선언한 px + `fill`(주축 예산 / 교차축 가용)까지.
+///
+/// `Button`/`Tab`은 컨테이너가 아니라서 [`apply_size`]를 타지 않는다. 그래서
+/// `width: fill`이 무시됐다 — 예산을 `min_size`로 옮겨 채운다.
+fn widget_size(ui: &egui::Ui, style: &ResolvedStyle, budget: Option<f32>) -> Option<egui::Vec2> {
+    let mut size = min_size(style).unwrap_or(egui::Vec2::ZERO);
+    let horizontal = ui.layout().main_dir().is_horizontal();
+    if style.width == Some(Len::Fill) {
+        let v = if horizontal {
+            budget
+        } else {
+            Some(ui.available_width())
+        };
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            size.x = size.x.max(v);
+        }
+    }
+    if style.height == Some(Len::Fill) {
+        let v = if horizontal {
+            Some(ui.available_height())
+        } else {
+            budget
+        };
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            size.y = size.y.max(v);
+        }
+    }
+    if size.x > 0.0 || size.y > 0.0 {
+        Some(egui::vec2(
+            clamp_axis(size.x, style.min_width, style.max_width),
+            clamp_axis(size.y, style.min_height, style.max_height),
+        ))
     } else {
         None
     }
@@ -752,7 +964,11 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
     walk.node += 1;
 
     // `display: none` — 자리도 차지하지 않는다
+    // (단 **해석된 스타일은 기록한다** — `pass.styles`로 CSS가 파싱됐는지 확인할 수 있다.)
     if style.is_display_none() {
+        if !style.is_empty() {
+            walk.pass.styles.push((el.tag(), style));
+        }
         return;
     }
     // `<Banner>`는 을 안 정하면 종류별 기본색을 쓴다
@@ -794,8 +1010,53 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
     write_state(ui.ctx(), id, drawn.rect, drawn.focused);
 }
 
+/// `Frame`을 쓰지 않는 리프 위젯인가 — 이들만 `margin` 프레임이 필요하다.
+///
+/// `Col`/`Row`/`Input`/`TextArea`는 [`frame_of`]가 이미 `outer_margin`을 적용한다.
+fn needs_margin_frame(el: &Element) -> bool {
+    matches!(
+        el,
+        Element::Text(_)
+            | Element::Strong(_)
+            | Element::Banner(_)
+            | Element::Spinner(_)
+            | Element::Divider(_)
+            | Element::Progress(_)
+            | Element::Button(_)
+            | Element::Tab(_)
+            | Element::Th(_)
+            | Element::Td(_)
+            | Element::Check(_)
+    )
+}
+
 /// 노드 하나를 그린다 — 스타일 해석·투명도·조상 스택은 `render_el`이 끝냈다.
+///
+/// `Frame`을 쓰지 않는 리프 위젯의 `margin`은 바깥 여백 프레임으로 적용한다
+/// (예전에는 컨테이너의 `margin`만 먹고 Button 등의 `margin`은 무시됐다 — 버그 B5).
 fn draw_body<'a>(
+    walk: &mut Walk<'a>,
+    ui: &mut egui::Ui,
+    el: &'a Element,
+    arena: &mut Arena,
+    style: ResolvedStyle,
+    palette: &Palette,
+) -> Drawn {
+    match style.margin {
+        Some(outer) if needs_margin_frame(el) => {
+            egui::Frame::NONE
+                .outer_margin(margin(outer))
+                .show(ui, |ui| {
+                    draw_body_inner(walk, ui, el, arena, style, palette)
+                })
+                .inner
+        }
+        _ => draw_body_inner(walk, ui, el, arena, style, palette),
+    }
+}
+
+/// `draw_body`의 본체 — 마진 프레임 결정 뒤에 불린다.
+fn draw_body_inner<'a>(
     walk: &mut Walk<'a>,
     ui: &mut egui::Ui,
     el: &'a Element,
@@ -893,7 +1154,7 @@ fn draw_body<'a>(
             if let Some(r) = style.radius {
                 button = button.corner_radius(radius(r));
             }
-            if let Some(size) = min_size(&style) {
+            if let Some(size) = widget_size(ui, &style, walk.main_budget) {
                 button = button.min_size(size);
             }
             if let Some(width) = style.border_width {
@@ -929,7 +1190,7 @@ fn draw_body<'a>(
             if let Some(r) = style.radius {
                 button = button.corner_radius(radius(r));
             }
-            if let Some(size) = min_size(&style) {
+            if let Some(size) = widget_size(ui, &style, walk.main_budget) {
                 button = button.min_size(size);
             }
             if let Some(width) = style.border_width {
@@ -955,6 +1216,9 @@ fn draw_body<'a>(
             }
             if let Some(r) = style.radius {
                 button = button.corner_radius(radius(r));
+            }
+            if let Some(size) = widget_size(ui, &style, walk.main_budget) {
+                button = button.min_size(size);
             }
             let resp = ui.add(button);
 
@@ -1135,6 +1399,11 @@ fn container<'a>(
                 ui.spacing_mut().item_spacing.y = gap;
             } else {
                 ui.spacing_mut().item_spacing.x = gap;
+                // `wrap` 줄바꿈 뒤 줄 간격도 gap을 따른다 (버그 B7 — 예전에는
+                // 가로 간격만 설정해 줄 사이가 0이었다).
+                if style.wrap == Some(true) {
+                    ui.spacing_mut().item_spacing.y = gap;
+                }
             }
         }
         apply_size(ui, style, walk.main_budget);

@@ -1773,6 +1773,29 @@ fn attr_lit(content: &str, env: &Env) -> AttrVal {
     )))
 }
 
+/// `toks[i] == '<'`인 시작 태그가 `/>`로 닫히는가.
+///
+/// 자기닫힘 태그는 자식 스캔의 `depth`를 늘리면 안 된다 — 예전에는
+/// `<Col><Col /></Col>`에서 안쪽 `<Col />`을 열린 태그로 세어 바깥 `</Col>`을
+/// 닫는 태그로 보지 못하고 "unclosed tag"로 컴파일이 깨졌다 (버그 B1).
+fn open_tag_is_self_closing(toks: &[TokenTree], i: usize) -> bool {
+    let mut j = i + 1;
+    if !matches!(toks.get(j), Some(TokenTree::Ident(_))) {
+        return false;
+    }
+    j += 1;
+    while let Some(tok) = toks.get(j) {
+        match tok {
+            TokenTree::Punct(p) if p.as_char() == '>' => return false,
+            TokenTree::Punct(p) if p.as_char() == '/' => {
+                return matches!(toks.get(j + 1), Some(TokenTree::Punct(gt)) if gt.as_char() == '>');
+            }
+            _ => j += 1,
+        }
+    }
+    false
+}
+
 /// Parse `<Tag attrs> children </Tag>` or `<Tag attrs />` at toks[i] == `<`.
 fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, usize) {
     let tag = match &toks[start + 1] {
@@ -1890,6 +1913,7 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
                     continue;
                 }
                 if matches!(toks.get(j + 1), Some(TokenTree::Ident(id2)) if id2.to_string() == tag)
+                    && !open_tag_is_self_closing(toks, j)
                 {
                     depth += 1;
                 }
