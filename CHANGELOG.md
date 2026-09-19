@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [0.8.0] — 2026-09-19
+
+### Changed
+
+- fix bugs
+- done
+- add faetures
+- 0.8.0 progress 1
+- add preview
+- commit
+
 ## [Unreleased] — 0.8.x 조건/반복 + `IntoView`
 
 ### Added
