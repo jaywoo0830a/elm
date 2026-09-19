@@ -1,4 +1,4 @@
-//! elm-magic 0.7.5 **컨테이너/컨테이닝 CSS 시나리오 매트릭스** — 예측 vs 계측.
+//! elm-magic 0.7.6 **컨테이너/컨테이닝 CSS 시나리오 매트릭스** — 예측 vs 계측.
 //!
 //! ## 방법
 //!
@@ -980,7 +980,7 @@ fn container_matrix_prediction_vs_measurement() {
         .map(|(n, f)| (line(n, &f()), f()))
         .collect();
     let _ = &rows;
-    eprintln!("\n== elm-magic 0.7.5 컨테이너/컨테이닝 CSS 매트릭스 (예측 vs 계측) ==");
+    eprintln!("\n== elm-magic 0.7.6 컨테이너/컨테이닝 CSS 매트릭스 (예측 vs 계측) ==");
     for (n, f) in scenarios() {
         eprintln!("{}", line(n, &f()));
     }
