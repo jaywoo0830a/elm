@@ -40,9 +40,9 @@ NOTES_FILE=""
 
 if [[ -t 1 ]]; then
   BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'
-  GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+  YELLOW=$'\033[33m'; RESET=$'\033[0m'
 else
-  BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; RESET=""
+  BOLD=""; DIM=""; RED=""; YELLOW=""; RESET=""
 fi
 
 log()  { printf '%s==>%s %s\n' "$BOLD" "$RESET" "$*"; }
@@ -136,8 +136,18 @@ preflight() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "git 저장소가 아닙니다"
   local branch; branch="$(git rev-parse --abbrev-ref HEAD)"
   [[ "$branch" != "HEAD" ]] || die "detached HEAD 에서는 릴리즈할 수 없습니다 (브랜치를 확인하세요)"
-  if [[ -n "$(git status --porcelain)" ]]; then
-    die "작업 트리가 깨끗하지 않습니다 — 먼저 커밋하거나 정리하세요"
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    if (( DRY_RUN )); then
+      warn "추적 중인 파일에 커밋되지 않은 변경이 있습니다 (--dry-run 이라 계속)"
+    else
+      die "추적 중인 파일에 커밋되지 않은 변경이 있습니다 — 먼저 커밋하세요 (--dry-run / --local 로 미리보기)"
+    fi
+  fi
+  local untracked
+  untracked="$(git ls-files --others --exclude-standard)"
+  if [[ -n "$untracked" ]]; then
+    warn "추적되지 않은 파일도 'git add -A' 로 릴리즈 커밋에 들어갑니다:"
+    sed 's/^/  /' <<<"$untracked" >&2
   fi
   if tag_exists && ! tag_points_at_head; then
     die "태그 v$VERSION 이 이미 다른 커밋을 가리킵니다 (재실행이면 HEAD 에서 실행하세요)"
