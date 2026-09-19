@@ -49,6 +49,22 @@ enum Kind {
     Cursor,
     /// `x y blur spread` (1~4개 숫자)
     Shadow,
+    /// `row` / `column`
+    Direction,
+    /// `visible` / `hidden` / `scroll` / `auto`
+    Overflow,
+    /// `none` / `solid` / `dashed` / `dotted`
+    BorderStyle,
+    /// 정수 (`-1`, `10`) — `z-index`
+    Int,
+    /// 음이 아닌 정수 (`3`) — `max-lines`
+    U32,
+    /// `nowrap` / `normal`
+    Nowrap,
+    /// `ellipsis` / `clip`
+    TextOverflow,
+    /// `auto` / `none`
+    PointerEvents,
 }
 
 /// (속성 이름, `StyleSpec` 필드, 값 종류).
@@ -92,6 +108,33 @@ const PROPS: &[(&str, &str, Kind)] = &[
     ("text-transform", "transform", Kind::Transform),
     ("truncate", "truncate", Kind::Bool),
     ("cursor", "cursor", Kind::Cursor),
+    // 0.8 — 확장 속성
+    ("flex-direction", "direction", Kind::Direction),
+    ("flex-grow", "flex_grow", Kind::Num),
+    ("flex-shrink", "flex_shrink", Kind::Num),
+    ("align-self", "align_self", Kind::Align),
+    ("overflow", "overflow", Kind::Overflow),
+    ("aspect-ratio", "aspect_ratio", Kind::Num),
+    ("z-index", "z_index", Kind::Int),
+    ("padding-top", "padding_top", Kind::Num),
+    ("padding-right", "padding_right", Kind::Num),
+    ("padding-bottom", "padding_bottom", Kind::Num),
+    ("padding-left", "padding_left", Kind::Num),
+    ("margin-top", "margin_top", Kind::Num),
+    ("margin-right", "margin_right", Kind::Num),
+    ("margin-bottom", "margin_bottom", Kind::Num),
+    ("margin-left", "margin_left", Kind::Num),
+    ("border-style", "border_style", Kind::BorderStyle),
+    ("border-top-width", "border_top_width", Kind::Num),
+    ("border-right-width", "border_right_width", Kind::Num),
+    ("border-bottom-width", "border_bottom_width", Kind::Num),
+    ("border-left-width", "border_left_width", Kind::Num),
+    ("white-space", "nowrap", Kind::Nowrap),
+    ("text-overflow", "ellipsis", Kind::TextOverflow),
+    ("max-lines", "max_lines", Kind::U32),
+    ("rotate", "rotate", Kind::Num),
+    ("scale", "scale", Kind::Num),
+    ("pointer-events", "pointer_events", Kind::PointerEvents),
 ];
 
 /// (토큰 이름, `Token` variant).
@@ -509,6 +552,23 @@ fn emit_field(name: &str, field: &str, kind: Kind, value: &str, selector: &str) 
             cursor_variant(value, name, selector)
         )),
         Kind::Shadow => some(shadow_expr(value, name, selector)),
+        Kind::Direction => some(format!(
+            "::elm_magic::style::Direction::{}",
+            direction_variant(value, name, selector)
+        )),
+        Kind::Overflow => some(format!(
+            "::elm_magic::style::Overflow::{}",
+            overflow_variant(value, name, selector)
+        )),
+        Kind::BorderStyle => some(format!(
+            "::elm_magic::style::BorderStyle::{}",
+            border_style_variant(value, name, selector)
+        )),
+        Kind::Int => some(format!("{}i32", parse_int(value, name, selector))),
+        Kind::U32 => some(format!("{}u32", parse_u32(value, name, selector))),
+        Kind::Nowrap => some(bool_expr(value, name, selector, "nowrap", "normal")),
+        Kind::TextOverflow => some(bool_expr(value, name, selector, "ellipsis", "clip")),
+        Kind::PointerEvents => some(bool_expr(value, name, selector, "auto", "none")),
         Kind::Decoration => unreachable!(),
     }
 }
@@ -587,10 +647,74 @@ fn cursor_variant(value: &str, name: &str, selector: &str) -> &'static str {
     }
 }
 
+/// `flex-direction` 값 → variant.
+fn direction_variant(value: &str, name: &str, selector: &str) -> &'static str {
+    match value {
+        "row" | "horizontal" => "Row",
+        "column" | "col" | "vertical" => "Column",
+        other => panic!(
+            "elm-magic css!: `{selector}`의 `{name}` 값 `{other}`는 쓸 수 없습니다 (row, column)"
+        ),
+    }
+}
+
+/// `overflow` 값 → variant.
+fn overflow_variant(value: &str, name: &str, selector: &str) -> &'static str {
+    match value {
+        "visible" => "Visible",
+        "hidden" => "Hidden",
+        "scroll" => "Scroll",
+        "auto" => "Auto",
+        other => panic!(
+            "elm-magic css!: `{selector}`의 `{name}` 값 `{other}`는 쓸 수 없습니다 (visible, hidden, scroll, auto)"
+        ),
+    }
+}
+
+/// `border-style` 값 → variant.
+fn border_style_variant(value: &str, name: &str, selector: &str) -> &'static str {
+    match value {
+        "none" => "None",
+        "solid" => "Solid",
+        "dashed" => "Dashed",
+        "dotted" => "Dotted",
+        other => panic!(
+            "elm-magic css!: `{selector}`의 `{name}` 값 `{other}`는 쓸 수 없습니다 (none, solid, dashed, dotted)"
+        ),
+    }
+}
+
+/// 정수 하나 (`-1`, `10`).
+fn parse_int(value: &str, name: &str, selector: &str) -> i32 {
+    value
+        .trim()
+        .replace(' ', "")
+        .parse::<i32>()
+        .unwrap_or_else(|_| {
+            panic!(
+                "elm-magic css!: `{selector}`의 `{name}` 값 `{value}`는 정수가 아닙니다 (예: `0`, `10`, `-1`)"
+            )
+        })
+}
+
+/// 음이 아닌 정수 하나 (`3`).
+fn parse_u32(value: &str, name: &str, selector: &str) -> u32 {
+    value
+        .trim()
+        .replace(' ', "")
+        .parse::<u32>()
+        .unwrap_or_else(|_| {
+            panic!(
+                "elm-magic css!: `{selector}`의 `{name}` 값 `{value}`는 0 이상의 정수가 아닙니다 (예: `2`, `3`)"
+            )
+        })
+}
+
 /// 숫자 하나 (`16`, `16px`, `1.5`, `-8`).
 fn parse_num(value: &str, name: &str, selector: &str) -> f32 {
-    let t = value.trim();
-    let t = t.strip_suffix("px").unwrap_or(t).trim();
+    // 토큰 렉서가 `-8`을 `- 8`로 나누므로 부호 앞의 공백을 붙여 준다.
+    let raw = value.trim().replace(' ', "");
+    let t = raw.strip_suffix("px").unwrap_or(&raw).trim();
     t.parse::<f32>().unwrap_or_else(|_| {
         panic!(
             "elm-magic css!: `{selector}`의 `{name}` 값 `{value}`는 숫자가 아닙니다 (예: `16`, `16px`, `1.5`)"

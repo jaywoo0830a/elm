@@ -34,7 +34,7 @@ elm_magic::css! {
     .merge_a, .merge_b { gap: 3; }
 }
 
-// 속성 36종 전부 (한 규칙에 선언 → `pairs()`로 한 번에 확인)
+// 속성 36종(0.7) 전부 (한 규칙에 선언 → `pairs()`로 한 번에 확인)
 elm_magic::css! {
     .everything {
         gap: 6; row-gap: 4; column-gap: 8;

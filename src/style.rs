@@ -397,6 +397,96 @@ impl Cursor {
     }
 }
 
+/// `flex-direction` 값 — 주축 방향.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Row,
+    Column,
+}
+
+impl Direction {
+    /// `css!` 값 → 방향.
+    pub fn from_name(name: &str) -> Option<Direction> {
+        match name {
+            "row" | "horizontal" => Some(Direction::Row),
+            "column" | "col" | "vertical" => Some(Direction::Column),
+            _ => None,
+        }
+    }
+
+    /// 선언 텍스트 복원.
+    pub fn text(self) -> &'static str {
+        match self {
+            Direction::Row => "row",
+            Direction::Column => "column",
+        }
+    }
+}
+
+/// `overflow` 값.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Overflow {
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+}
+
+impl Overflow {
+    /// `css!` 값 → 넘침 처리.
+    pub fn from_name(name: &str) -> Option<Overflow> {
+        match name {
+            "visible" => Some(Overflow::Visible),
+            "hidden" => Some(Overflow::Hidden),
+            "scroll" => Some(Overflow::Scroll),
+            "auto" => Some(Overflow::Auto),
+            _ => None,
+        }
+    }
+
+    /// 선언 텍스트 복원.
+    pub fn text(self) -> &'static str {
+        match self {
+            Overflow::Visible => "visible",
+            Overflow::Hidden => "hidden",
+            Overflow::Scroll => "scroll",
+            Overflow::Auto => "auto",
+        }
+    }
+}
+
+/// `border-style` 값.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BorderStyle {
+    None,
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl BorderStyle {
+    /// `css!` 값 → 테두리 모양.
+    pub fn from_name(name: &str) -> Option<BorderStyle> {
+        match name {
+            "none" => Some(BorderStyle::None),
+            "solid" => Some(BorderStyle::Solid),
+            "dashed" => Some(BorderStyle::Dashed),
+            "dotted" => Some(BorderStyle::Dotted),
+            _ => None,
+        }
+    }
+
+    /// 선언 텍스트 복원.
+    pub fn text(self) -> &'static str {
+        match self {
+            BorderStyle::None => "none",
+            BorderStyle::Solid => "solid",
+            BorderStyle::Dashed => "dashed",
+            BorderStyle::Dotted => "dotted",
+        }
+    }
+}
+
 /// 그림자 — CSS `box-shadow`의 `x y blur spread` (뒤 값은 생략 가능).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shadow {
@@ -838,16 +928,31 @@ pub struct StyleSpec {
     pub row_gap: Option<f32>,
     pub column_gap: Option<f32>,
     pub padding: Option<Edges>,
+    pub padding_top: Option<f32>,
+    pub padding_right: Option<f32>,
+    pub padding_bottom: Option<f32>,
+    pub padding_left: Option<f32>,
     pub margin: Option<Edges>,
+    pub margin_top: Option<f32>,
+    pub margin_right: Option<f32>,
+    pub margin_bottom: Option<f32>,
+    pub margin_left: Option<f32>,
     pub width: Option<Len>,
     pub height: Option<Len>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
+    pub direction: Option<Direction>,
+    pub flex_grow: Option<f32>,
+    pub flex_shrink: Option<f32>,
     pub align: Option<Align>,
+    pub align_self: Option<Align>,
     pub justify: Option<Align>,
     pub wrap: Option<bool>,
+    pub overflow: Option<Overflow>,
+    pub aspect_ratio: Option<f32>,
+    pub z_index: Option<i32>,
     /// `display: none` — 자리를 차지하지 않는다.
     pub display_none: Option<bool>,
     /// `visibility: hidden` — 자리는 차지하되 안 보인다.
@@ -858,6 +963,11 @@ pub struct StyleSpec {
     pub fill: Option<Token>,
     pub border_width: Option<f32>,
     pub border_color: Option<Token>,
+    pub border_style: Option<BorderStyle>,
+    pub border_top_width: Option<f32>,
+    pub border_right_width: Option<f32>,
+    pub border_bottom_width: Option<f32>,
+    pub border_left_width: Option<f32>,
     pub radius: Option<f32>,
     pub shadow: Option<Shadow>,
     pub shadow_color: Option<Token>,
@@ -875,8 +985,21 @@ pub struct StyleSpec {
     pub text_align: Option<Align>,
     pub transform: Option<Transform>,
     pub truncate: Option<bool>,
+    /// `white-space: nowrap`.
+    pub nowrap: Option<bool>,
+    /// `text-overflow: ellipsis`.
+    pub ellipsis: Option<bool>,
+    /// `max-lines` — 줄 수 제한 (0이면 제한 없음).
+    pub max_lines: Option<u32>,
+    // 변형
+    /// 회전 (도).
+    pub rotate: Option<f32>,
+    /// 배율.
+    pub scale: Option<f32>,
     // 상호작용
     pub cursor: Option<Cursor>,
+    /// `pointer-events: auto`(true) / `none`(false).
+    pub pointer_events: Option<bool>,
 }
 
 impl StyleSpec {
@@ -886,22 +1009,42 @@ impl StyleSpec {
         row_gap: None,
         column_gap: None,
         padding: None,
+        padding_top: None,
+        padding_right: None,
+        padding_bottom: None,
+        padding_left: None,
         margin: None,
+        margin_top: None,
+        margin_right: None,
+        margin_bottom: None,
+        margin_left: None,
         width: None,
         height: None,
         min_width: None,
         min_height: None,
         max_width: None,
         max_height: None,
+        direction: None,
+        flex_grow: None,
+        flex_shrink: None,
         align: None,
+        align_self: None,
         justify: None,
         wrap: None,
+        overflow: None,
+        aspect_ratio: None,
+        z_index: None,
         display_none: None,
         hidden: None,
         bg: None,
         fill: None,
         border_width: None,
         border_color: None,
+        border_style: None,
+        border_top_width: None,
+        border_right_width: None,
+        border_bottom_width: None,
+        border_left_width: None,
         radius: None,
         shadow: None,
         shadow_color: None,
@@ -918,7 +1061,13 @@ impl StyleSpec {
         text_align: None,
         transform: None,
         truncate: None,
+        nowrap: None,
+        ellipsis: None,
+        max_lines: None,
+        rotate: None,
+        scale: None,
         cursor: None,
+        pointer_events: None,
     };
 }
 
@@ -949,16 +1098,31 @@ pub struct ResolvedStyle {
     pub row_gap: Option<f32>,
     pub column_gap: Option<f32>,
     pub padding: Option<Edges>,
+    pub padding_top: Option<f32>,
+    pub padding_right: Option<f32>,
+    pub padding_bottom: Option<f32>,
+    pub padding_left: Option<f32>,
     pub margin: Option<Edges>,
+    pub margin_top: Option<f32>,
+    pub margin_right: Option<f32>,
+    pub margin_bottom: Option<f32>,
+    pub margin_left: Option<f32>,
     pub width: Option<Len>,
     pub height: Option<Len>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
+    pub direction: Option<Direction>,
+    pub flex_grow: Option<f32>,
+    pub flex_shrink: Option<f32>,
     pub align: Option<Align>,
+    pub align_self: Option<Align>,
     pub justify: Option<Align>,
     pub wrap: Option<bool>,
+    pub overflow: Option<Overflow>,
+    pub aspect_ratio: Option<f32>,
+    pub z_index: Option<i32>,
     pub display_none: Option<bool>,
     pub hidden: Option<bool>,
     // 칠
@@ -966,6 +1130,11 @@ pub struct ResolvedStyle {
     pub fill: Option<Color>,
     pub border_width: Option<f32>,
     pub border_color: Option<Color>,
+    pub border_style: Option<BorderStyle>,
+    pub border_top_width: Option<f32>,
+    pub border_right_width: Option<f32>,
+    pub border_bottom_width: Option<f32>,
+    pub border_left_width: Option<f32>,
     pub radius: Option<f32>,
     pub shadow: Option<Shadow>,
     pub shadow_color: Option<Color>,
@@ -983,8 +1152,15 @@ pub struct ResolvedStyle {
     pub text_align: Option<Align>,
     pub transform: Option<Transform>,
     pub truncate: Option<bool>,
+    pub nowrap: Option<bool>,
+    pub ellipsis: Option<bool>,
+    pub max_lines: Option<u32>,
+    // 변형
+    pub rotate: Option<f32>,
+    pub scale: Option<f32>,
     // 상호작용
     pub cursor: Option<Cursor>,
+    pub pointer_events: Option<bool>,
 }
 
 impl ResolvedStyle {
@@ -1002,19 +1178,39 @@ impl ResolvedStyle {
             row_gap,
             column_gap,
             padding,
+            padding_top,
+            padding_right,
+            padding_bottom,
+            padding_left,
             margin,
+            margin_top,
+            margin_right,
+            margin_bottom,
+            margin_left,
             width,
             height,
             min_width,
             min_height,
             max_width,
             max_height,
+            direction,
+            flex_grow,
+            flex_shrink,
             align,
+            align_self,
             justify,
             wrap,
+            overflow,
+            aspect_ratio,
+            z_index,
             display_none,
             hidden,
             border_width,
+            border_style,
+            border_top_width,
+            border_right_width,
+            border_bottom_width,
+            border_left_width,
             radius,
             shadow,
             opacity,
@@ -1029,7 +1225,13 @@ impl ResolvedStyle {
             text_align,
             transform,
             truncate,
+            nowrap,
+            ellipsis,
+            max_lines,
+            rotate,
+            scale,
             cursor,
+            pointer_events,
         );
         // 색만 팔레트로 확정한다
         if let Some(t) = spec.bg {
@@ -1053,7 +1255,7 @@ impl ResolvedStyle {
     ///
     /// 상속되는 것: `color` `font-size` `line-height` `letter-spacing`
     /// `weight` `font-style` `font-family` `text-decoration` `text-align`
-    /// `text-transform`.
+    /// `text-transform` `white-space`.
     ///
     /// 상속되지 않는 것: 여백·크기·배경·테두리·그림자·정렬·커서 등.
     pub fn inherit_from(&mut self, parent: &ResolvedStyle) {
@@ -1071,6 +1273,7 @@ impl ResolvedStyle {
             underline,
             text_align,
             transform,
+            nowrap,
         );
     }
 
@@ -1150,16 +1353,31 @@ impl StyleProps {
                 }
             };
         }
+        macro_rules! txt {
+            ($key:expr, $v:expr) => {
+                if let Some(v) = $v {
+                    out.push(($key.to_string(), v.text().to_string()));
+                }
+            };
+        }
         // 레이아웃
         num!("gap", s.gap);
         num!("row-gap", s.row_gap);
         num!("column-gap", s.column_gap);
+        num!("padding-top", s.padding_top);
+        num!("padding-right", s.padding_right);
+        num!("padding-bottom", s.padding_bottom);
+        num!("padding-left", s.padding_left);
         if let Some(v) = s.padding {
             out.push(("padding".into(), v.text()));
         }
         if let Some(v) = s.margin {
             out.push(("margin".into(), v.text()));
         }
+        num!("margin-top", s.margin_top);
+        num!("margin-right", s.margin_right);
+        num!("margin-bottom", s.margin_bottom);
+        num!("margin-left", s.margin_left);
         if let Some(v) = &s.width {
             out.push(("width".into(), v.text()));
         }
@@ -1170,6 +1388,13 @@ impl StyleProps {
         num!("min-height", s.min_height);
         num!("max-width", s.max_width);
         num!("max-height", s.max_height);
+        txt!("flex-direction", s.direction);
+        num!("flex-grow", s.flex_grow);
+        num!("flex-shrink", s.flex_shrink);
+        txt!("align-self", s.align_self);
+        txt!("overflow", s.overflow);
+        num!("aspect-ratio", s.aspect_ratio);
+        num!("z-index", s.z_index);
         if let Some(v) = s.align {
             out.push(("align".into(), v.text().to_string()));
         }
@@ -1194,6 +1419,11 @@ impl StyleProps {
         tok!("fill", s.fill);
         num!("border-width", s.border_width);
         tok!("border-color", s.border_color);
+        txt!("border-style", s.border_style);
+        num!("border-top-width", s.border_top_width);
+        num!("border-right-width", s.border_right_width);
+        num!("border-bottom-width", s.border_bottom_width);
+        num!("border-left-width", s.border_left_width);
         num!("radius", s.radius);
         if let Some(v) = &s.shadow {
             out.push(("shadow".into(), v.text()));
@@ -1241,9 +1471,30 @@ impl StyleProps {
             out.push(("text-transform".into(), v.text().to_string()));
         }
         flag!("truncate", s.truncate);
+        if let Some(v) = s.nowrap {
+            out.push((
+                "white-space".into(),
+                if v { "nowrap" } else { "normal" }.to_string(),
+            ));
+        }
+        if let Some(v) = s.ellipsis {
+            out.push((
+                "text-overflow".into(),
+                if v { "ellipsis" } else { "clip" }.to_string(),
+            ));
+        }
+        num!("max-lines", s.max_lines);
+        num!("rotate", s.rotate);
+        num!("scale", s.scale);
         // 상호작용
         if let Some(v) = s.cursor {
             out.push(("cursor".into(), v.text().to_string()));
+        }
+        if let Some(v) = s.pointer_events {
+            out.push((
+                "pointer-events".into(),
+                if v { "auto" } else { "none" }.to_string(),
+            ));
         }
         out
     }
