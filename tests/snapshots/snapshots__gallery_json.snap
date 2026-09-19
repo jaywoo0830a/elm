@@ -1,0 +1,148 @@
+---
+source: tests/snapshots.rs
+expression: app.element()
+---
+{
+  "Col": {
+    "class": [
+      "snap_gallery"
+    ],
+    "children": [
+      {
+        "Row": {
+          "class": [],
+          "children": [
+            {
+              "Text": {
+                "text": "row",
+                "class": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Text": {
+          "text": "text",
+          "class": [
+            "snap_dim"
+          ]
+        }
+      },
+      {
+        "Strong": {
+          "text": "strong",
+          "class": []
+        }
+      },
+      {
+        "Button": {
+          "text": "button",
+          "class": [],
+          "disabled": false
+        }
+      },
+      {
+        "Input": {
+          "value": "",
+          "class": []
+        }
+      },
+      {
+        "TextArea": {
+          "value": "",
+          "class": []
+        }
+      },
+      {
+        "Check": {
+          "checked": false,
+          "label": "check",
+          "class": []
+        }
+      },
+      {
+        "Tab": {
+          "text": "tab",
+          "active": true,
+          "class": []
+        }
+      },
+      {
+        "Th": {
+          "text": "th",
+          "class": []
+        }
+      },
+      {
+        "Td": {
+          "text": "cell",
+          "class": []
+        }
+      },
+      {
+        "Banner": {
+          "kind": "error",
+          "text": "banner",
+          "class": []
+        }
+      },
+      {
+        "Spinner": {
+          "class": []
+        }
+      },
+      {
+        "Divider": {
+          "class": []
+        }
+      },
+      {
+        "Progress": {
+          "value": 0.25,
+          "class": []
+        }
+      },
+      {
+        "Modal": {
+          "title": "",
+          "class": [],
+          "children": [
+            {
+              "Text": {
+                "text": "modal",
+                "class": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Row": {
+          "class": [],
+          "children": [
+            {
+              "Text": {
+                "text": "item:a",
+                "class": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Row": {
+          "class": [],
+          "children": [
+            {
+              "Text": {
+                "text": "item:b",
+                "class": []
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

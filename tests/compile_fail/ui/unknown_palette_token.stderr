@@ -1,0 +1,9 @@
+error: proc macro panicked
+ --> tests/compile_fail/ui/unknown_palette_token.rs:2:1
+  |
+2 | / elm_magic::css! {
+3 | |     .bad { bg: nope; }
+4 | | }
+  | |_^
+  |
+  = help: message: elm-magic css!: `.bad`의 `bg` 값 `nope`는 레트 토큰이 아닙니다. 지원: primary, on_primary, surface, surface_alt, background, text, text_dim, error, warn, success, info, border, shadow, overlay

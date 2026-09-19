@@ -36,6 +36,13 @@ serde = ["dep:serde"]
 [dev-dependencies]
 # 스냅샷 계약 테스트 전용 (사양서 8.3) — 배포 그래프에는 포함되지 않는다.
 serde_json = "1"
+# P1 품질 테스트 3종 (모두 dev 전용 — `cargo tree -p elm-magic -e normal`은 여전히 0).
+# - trybuild: 사양서가 "컴파일 에러"라고 약속한 것들을 `.stderr`로 고정 (tests/compile_fail.rs)
+# - proptest: 모델 기반 테스트 — 카운터/리스트/keyed/디바운스/캐스케이드 (tests/properties.rs)
+# - insta: 사양서 8.3의 `insta::assert_snapshot!` 계약 (tests/snapshots.rs)
+trybuild = "1"
+proptest = "1"
+insta = { version = "1", features = ["json"] }
 
 [package.metadata.docs.rs]
 # 선택 기능(`serde`)까지 문서화한다 — `Element: Serialize`가 docs.rs에 보이도록.

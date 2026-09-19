@@ -1,0 +1,8 @@
+---
+source: tests/snapshots.rs
+expression: app.a11y_tree()
+---
+group
+  text "Count: 0"
+  button "-"
+  button "+"

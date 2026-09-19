@@ -1,0 +1,9 @@
+error: proc macro panicked
+ --> tests/compile_fail/ui/unknown_css_property.rs:2:1
+  |
+2 | / elm_magic::css! {
+3 | |     .bad { nope: 1; }
+4 | | }
+  | |_^
+  |
+  = help: message: elm-magic css!: 모르는 속성 `nope` (셀렉터 `.bad`). 지원: gap, row-gap, column-gap, padding, margin, width, height, min-width, min-height, max-width, max-height, align, justify, wrap, display, visibility, bg, fill, border-width, border-color, radius, shadow, shadow-color, opacity, color, font-size, line-height, letter-spacing, weight, font-style, font-family, text-decoration, text-align, text-transform, truncate, cursor

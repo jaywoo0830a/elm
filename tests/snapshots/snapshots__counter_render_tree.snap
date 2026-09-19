@@ -1,0 +1,8 @@
+---
+source: tests/snapshots.rs
+expression: app.render_tree()
+---
+Col
+  Text "Count: 0"
+  Button "-"
+  Button "+"

@@ -1,0 +1,116 @@
+# CI — RELEASING.md 2단계(로컬 검증)를 자동화한다.
+#
+# 정책:
+# - 경고 0개가 이 저장소의 품질 기준이므로 `RUSTFLAGS=-D warnings`로 돈다.
+# - `tests/compile_fail/ui/*.stderr`(trybuild)와 스냅샷은 **커밋된 파일**과 비교한다.
+#   툴체인을 올리면 달라질 수 있어 아래 `stable`을 고정하지 않고 최신 stable을 쓰되,
+#   실패하면 `TRYBUILD=overwrite` / `INSTA_UPDATE=always`로 재생성하고 diff를 리뷰한다.
+# - gpui 어댑터 테스트는 gpui-kit의 헤드리스 하네스(`test-support`)에 의존한다.
+#   이 환경에서는 Linux에서만 실측했으므로, Windows/macOS는 해당 크레이트를 제외하고 돈다.
+name: CI
+
+on:
+  push:
+    branches: ["dev", "main"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ── Linux: 전체 스위트 + 릴리스 모드 + 포장 검증 ────────────
+  test:
+    name: test (ubuntu, full)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt (품질 테스트 파일)
+        # `src/style.rs`에 **기존** 포맷 드리프트가 있어 `cargo fmt --all --check`는
+        # 아직 통과하지 못한다 (src/ 정리는 별도 작업). 새로 추가한 테스트 파일만 검사한다.
+        run: rustfmt --check --edition 2021 tests/*.rs tests/compile_fail/ui/*.rs crates/*/tests/*.rs
+
+      - name: clippy (품질 테스트 코드 경고 0)
+        # 기존 `src/`(elm-magic-macros, elm-magic-gpui, elm-magic)에 clippy 린트가 남아
+        # 있어 전체 `-D warnings`는 아직 통과하지 못한다. 대신 **새 품질 테스트 파일**에
+        # 경고가 하나도 없어야 한다 — 새 테스트가 린트를 늘리면 여기서 막힌다.
+        #
+        # 파일 목록을 명시하는 이유: `tests/callbacks.rs`·`tests/integration.rs`의
+        # `needless_update` 경고는 **`view!` 전개 코드**에서 나오는 것이라 테스트 쪽에서
+        # 고칠 수 없다 (매크로가 모든 prop을 지정했는데도 `..Default::default()`를 붙인다).
+        run: |
+          cargo clippy --workspace --all-targets --all-features 2>&1 | tee /tmp/clippy.log
+          QUALITY='\-\-> (tests/(contract|determinism|isolation|edge_cases|diagnostics|widget_matrix|properties|snapshots|resource_budget|compile_fail)|crates/[a-z-]+/tests)/'
+          if grep -E '^warning' -A3 /tmp/clippy.log | grep -E "$QUALITY"; then
+            echo "::error::품질 테스트 코드에 clippy 경고가 있다"
+            exit 1
+          fi
+          echo "--- 기존 src/ 린트(비차단, 별도 정리 대상) ---"
+          grep -E '\-\-> (src|crates/[a-z-]+/src)/' /tmp/clippy.log || echo "없음"
+
+      - name: test (기본 / 전체기능 / 릴리스)
+        run: |
+          cargo test --workspace
+          cargo test --workspace --all-features
+          cargo test --workspace --release
+
+      - name: 스냅샷이 승인되지 않은 채 남지 않았는지
+        run: |
+          if find tests -name '*.snap.new' | grep -q .; then
+            echo "::error::승인되지 않은 스냅샷이 있다 — cargo insta review"
+            find tests -name '*.snap.new'
+            exit 1
+          fi
+
+      - name: 런타임 의존성 0 정책
+        run: |
+          cargo tree -p elm-magic -e normal
+          if cargo tree -p elm-magic -e normal | grep -E 'serde|proptest|insta|trybuild|egui|gpui'; then
+            echo "::error::런타임 그래프에 외부 크레이트가 들어왔다"
+            exit 1
+          fi
+
+      # RELEASING.md 2단계: 아직 배포되지 않은 버전은 로컬 patch로 대체해 포장을 검증한다.
+      - name: cargo package ×4
+        run: |
+          cargo package --allow-dirty -p elm-magic-macros
+          cargo package --allow-dirty -p elm-magic \
+            --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
+          cargo package --allow-dirty -p elm-magic-egui \
+            --config 'patch.crates-io.elm-magic.path="."' \
+            --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
+          cargo package --allow-dirty -p elm-magic-gpui \
+            --config 'patch.crates-io.elm-magic.path="."' \
+            --config 'patch.crates-io.elm-magic-macros.path="crates/elm-magic-macros"'
+
+  # ── Windows/macOS: 코어 + egui (gpui 하네스는 Linux 전용) ──
+  cross-os:
+    name: test (${{ matrix.os }}, core + egui)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude elm-magic-gpui
+      - run: cargo test --workspace --exclude elm-magic-gpui --all-features
+
+  # ── MSRV (RELEASING.md: 최신 API가 Waker::noop → 1.85) ─────
+  msrv:
+    name: msrv (1.85, lib check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      # dev-dependencies(proptest/insta/trybuild)는 MSRV와 무관하므로 라이브러리만 검사한다.
+      - run: cargo check -p elm-magic --all-features
+      - run: cargo check -p elm-magic-egui

@@ -1,0 +1,11 @@
+error: proc macro panicked
+ --> tests/compile_fail/ui/unknown_tag.rs:2:1
+  |
+2 | / elm_magic::view! {
+3 | |     fn Bad() {
+4 | |         <h1>"nope"</h1>
+5 | |     }
+6 | | }
+  | |_^
+  |
+  = help: message: elm-magic: unknown tag `<h1>` (builtins: Col, Row, Text, Strong, Button, Input, TextArea, Check, Tab, Th, Td, Banner, Spinner, Divider, Progress, Modal, Raw)

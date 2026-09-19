@@ -15,12 +15,13 @@ elm_magic::view! {
 }
 
 fn input() -> egui::RawInput {
-    let mut i = egui::RawInput::default();
-    i.screen_rect = Some(egui::Rect::from_min_size(
-        egui::Pos2::ZERO,
-        egui::vec2(800.0, 600.0),
-    ));
-    i
+    egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        )),
+        ..Default::default()
+    }
 }
 
 /// 모든 페인트 명령에서 텍스트 수집
@@ -283,5 +284,140 @@ fn egui_button_and_tab_respect_padding_and_height() {
         "Tab의 padding이 rect 폭을 키워야 한다: {} vs {}",
         padded_tab.width(),
         plain_tab.width()
+    );
+}
+
+// ── P2 패리티 — 같은 컴포넌트가 두 경로(헤드리스 / egui)에서 같은 계약을 따르는가 ──
+//
+// 어댑터는 코어 위에 얹히므로, 여기서 확인하는 것은 **어댑터가 코어의 결정과
+// 어긋나지 않는지**다. 의도된 발산(disabled 클릭, display:none, Raw)은 명시적으로
+// 고정한다 — 조용한 발산이 회귀의 온상이기 때문이다.
+
+use elm_magic::prelude::Role;
+
+elm_magic::view! {
+    fn ParityButtons(n = 0) {
+        <Col>
+            "Count: {n}"
+            <Button on_click={n += 1}>"plus"</Button>
+            <Button on_click={n -= 1}>"minus"</Button>
+            <Row>
+                <Tab active={n == 0} on_click={n = 0}>"Home"</Tab>
+                <Tab active={n == 1} on_click={n = 1}>"Stats"</Tab>
+            </Row>
+        </Col>
+    }
+}
+
+#[test]
+fn egui_buttons_cover_every_headless_button() {
+    let mut app = elm_magic::mount::<ParityButtons>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+
+    let egui_labels: Vec<&str> = pass.buttons.iter().map(|(l, _)| l.as_str()).collect();
+    let headless_buttons: Vec<String> = app
+        .roles()
+        .into_iter()
+        .filter(|(role, _)| *role == Role::Button)
+        .filter_map(|(_, label)| label)
+        .collect();
+
+    assert_eq!(
+        headless_buttons.len(),
+        2,
+        "헤드리스 계약: 버튼 2개 — {headless_buttons:?}"
+    );
+    for label in &headless_buttons {
+        assert!(
+            egui_labels.contains(&label.as_str()),
+            "헤드리스 버튼 {label:?}가 egui에 그려지지 않았다: {egui_labels:?}"
+        );
+    }
+    // egui가 헤드리스에 없는 위젯을 만들어내지 않는다 (Tab도 버튼 계열로 그려진다)
+    for label in &egui_labels {
+        assert!(
+            headless_buttons.iter().any(|b| b == label) || *label == "Home" || *label == "Stats",
+            "egui에만 있는 위젯이 생겼다: {label:?} ({egui_labels:?})"
+        );
+    }
+}
+
+#[test]
+fn egui_styles_match_headless_resolution() {
+    let mut app = elm_magic::mount::<Styled>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+
+    let headless = app.element().resolved_style(&Palette::dark());
+    let egui_col = pass.style_of("col").expect("Col 스타일");
+
+    assert_eq!(egui_col.gap, headless.gap, "gap이 코어 해석과 다르다");
+    assert_eq!(egui_col.padding, headless.padding, "padding이 다르다");
+    assert_eq!(egui_col.bg, headless.bg, "bg가 다르다");
+    assert_eq!(egui_col.radius, headless.radius, "radius가 다르다");
+
+    let headless_text = app
+        .element()
+        .children()
+        .and_then(|children| children.iter().find(|c| c.tag() == "text"))
+        .expect("Text 자식")
+        .resolved_style(&Palette::dark());
+    let egui_text = pass.style_of("text").expect("Text 스타일");
+    assert_eq!(egui_text.color, headless_text.color, "color가 다르다");
+    assert_eq!(egui_text.font_size, headless_text.font_size);
+    assert_eq!(egui_text.bold, headless_text.bold);
+}
+
+#[test]
+fn display_none_is_painted_nowhere_but_present_in_the_headless_tree() {
+    let mut app = elm_magic::mount::<Toggly>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+
+    // egui: display:none은 자리도 차지하지 않는다
+    let egui_labels: Vec<&str> = pass.buttons.iter().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(egui_labels, ["always"], "숨긴 버튼은 그려지지 않는다");
+
+    // 헤드리스: 트리와 접근성에는 그대로 남는다 (의도된 발산)
+    let tree = app.render_tree();
+    assert!(
+        tree.contains("\"never\""),
+        "헤드리스 트리에는 남는다:\n{tree}"
+    );
+    app.assert_text("never");
+}
+
+elm_magic::view! {
+    fn ParityDisabled(n = 0) {
+        <Col>
+            "Count: {n}"
+            <Button disabled={true} on_click={n += 1}>"nope"</Button>
+        </Col>
+    }
+}
+
+#[test]
+fn disabled_buttons_do_not_dispatch_in_egui_but_do_headless() {
+    let mut app = elm_magic::mount::<ParityDisabled>();
+    let ctx = egui::Context::default();
+    let (_, pass) = frame(&ctx, &mut app, input());
+
+    if let Some((_, response)) = pass.buttons.iter().find(|(label, _)| label == "nope") {
+        let _ = frame(&ctx, &mut app, click_events(response.rect.center()));
+        app.refresh();
+    }
+    let (out, _) = frame(&ctx, &mut app, input());
+    assert!(
+        painted_text(&out).contains("Count: 0"),
+        "egui는 disabled 버튼 클릭을 무시한다 (의도된 발산)"
+    );
+
+    // 헤드리스는 현재 의미론상 핸들러를 그대로 부른다 (tests/callbacks.rs)
+    app.click("nope");
+    assert!(
+        app.render_tree().contains("Count: 1"),
+        "헤드리스 클릭은 디스패치한다:\n{}",
+        app.render_tree()
     );
 }

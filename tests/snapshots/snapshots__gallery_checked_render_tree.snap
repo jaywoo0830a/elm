@@ -1,0 +1,26 @@
+---
+source: tests/snapshots.rs
+expression: app.render_tree()
+---
+Col .snap_gallery
+  Row
+    Text "row"
+  Text "text" .snap_dim
+  Strong "strong"
+  Button "button"
+  Input value=""
+  TextArea value=""
+  Check "check" checked=true
+  Tab "tab" active
+  Th "th"
+  Td "cell"
+  Banner kind="error" "banner"
+  Spinner
+  Divider
+  Progress 0.25
+  Modal ""
+    Text "modal"
+  Row
+    Text "item:a"
+  Row
+    Text "item:b"

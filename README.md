@@ -89,6 +89,11 @@ impl Render for Hello {
 - **구독**: `on_message` / `on_event` / `on_net_change` / `on_navigate` / `on_unmount`
 - **컴포넌트**: 콜백 prop(`on_select={..}`), children, `mount_with!`
 - **테스트**: `flush` / `advance` / `pump` / `click` / `type_` / `press_key` / `render_tree`
+- **품질 테스트**: 사양서 계약·결정성·격리·경계값(`tests/contract.rs` 등),
+  `insta` 스냅샷, `trybuild` 컴파일 실패 계약, `proptest` 모델 기반,
+  egui·gpui 어댑터 헤드리스 테스트 — `cargo test --workspace` **285개**(`--all-features` 292)
+- **CI**: `.github/workflows/ci.yml` — 테스트 3모드 + 테스트 코드 fmt/clippy +
+  스냅샷 승인 + 런타임 의존성 0 검사 + `cargo package` ×4 (Windows/macOS·MSRV 포함)
 - **위젯 프로토콜 (0.7)**: `Widget` 트레이트 + `enum_dispatch` — `role` / `label` /
   `is_interactive` / `is_disabled` / 핸들러 접근을 variant 매칭 없이
 - **셀렉터 (0.7)**: `click_role` / `sel!` / `query` / `exists` / `a11y_tree`

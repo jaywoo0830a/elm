@@ -1,0 +1,26 @@
+---
+source: tests/snapshots.rs
+expression: app.a11y_tree()
+---
+group
+  group
+    text "row"
+  text "text"
+  strong "strong"
+  button "button"
+  textbox ""
+  textbox ""
+  checkbox "check"
+  tab "tab"
+  columnheader "th"
+  cell "cell"
+  banner "banner"
+  spinner
+  separator
+  progressbar
+  dialog ""
+    text "modal"
+  group
+    text "item:a"
+  group
+    text "item:b"

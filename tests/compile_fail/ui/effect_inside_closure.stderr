@@ -1,0 +1,41 @@
+error: unexpected token: `<-`
+  --> tests/compile_fail/ui/effect_inside_closure.rs:6:1
+   |
+ 6 | / elm_magic::view! {
+ 7 | |     fn Bad(msg = String::new()) {
+ 8 | |         let start = || {
+ 9 | |             msg <- api()
+...  |
+14 | | }
+   | |_^
+   |
+   = note: this error originates in the macro `elm_magic::view` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: if you meant to write a comparison against a negative value, add a space in between `<` and `-`
+   |
+ 6 - elm_magic::view! {
+ 7 -     fn Bad(msg = String::new()) {
+ 8 -         let start = || {
+ 9 -             msg <- api()
+10 -         };
+11 -         let _ = start;
+12 -         <Col>"x"</Col>
+13 -     }
+14 - }
+ 6 + < -
+   |
+
+error[E0308]: mismatched types
+  --> tests/compile_fail/ui/effect_inside_closure.rs:6:1
+   |
+ 6 | / elm_magic::view! {
+ 7 | |     fn Bad(msg = String::new()) {
+ 8 | |         let start = || {
+ 9 | |             msg <- api()
+...  |
+14 | | }
+   | | ^
+   | | |
+   | |_expected `String`, found future
+   |   expected because this is `String`
+   |
+   = note: this error originates in the macro `elm_magic::view` (in Nightly builds, run with -Z macro-backtrace for more info)

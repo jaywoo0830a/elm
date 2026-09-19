@@ -32,8 +32,9 @@ Also refresh `README.md`'s install snippet (`elm-magic = "0.7"`) and `CHANGELOG.
 ## 2. Local verification (mandatory before publishing — it cannot be undone)
 
 ```sh
-cargo test --workspace                  # 206
-cargo test --workspace --all-features   # 210
+cargo test --workspace                  # 285
+cargo test --workspace --all-features   # 292
+cargo test --workspace --release        # 285 (오버플로 의미론 포함)
 
 cargo package --allow-dirty -p elm-magic-macros
 
@@ -109,7 +110,9 @@ cargo test
 - [ ] 4 × `Cargo.toml` versions + 3 × path dependency requirements bumped
 - [ ] `Cargo.lock` shows 0.7.4 (`grep -A1 'name = "elm-magic"' Cargo.lock`)
 - [ ] README install snippet (`0.7`) · CHANGELOG updated
-- [ ] `cargo test --workspace` / `--all-features` pass (206 / 210)
+- [ ] `cargo test --workspace` / `--all-features` / `--release` pass (285 / 292 / 285)
+- [ ] `tests/compile_fail/ui/*.stderr`와 `tests/snapshots/*.snap`가 커밋됐는지
+      (툴체인을 올렸다면 `TRYBUILD=overwrite` / `INSTA_UPDATE=always`로 재생성 후 diff 리뷰)
 - [ ] `cargo package` passes for all 4 (including the patch verification)
 - [ ] commit + `git tag v0.7.4` + push
 - [ ] `elm-magic-macros` → (wait for propagation) → `elm-magic` →
@@ -120,8 +123,12 @@ cargo test
 
 - Declaring `rust-version` (MSRV) produces friendlier errors on old toolchains.
   The newest API we need is `Waker::noop()` (Rust 1.85), so `rust-version = "1.85"` is valid.
-- CI (`.github/workflows/ci.yml`) running `cargo test --workspace --all-features` plus the
-  three `cargo package` invocations automates step 2.
+  (`.github/workflows/ci.yml` already checks 1.85 with `cargo check`.)
+- CI (`.github/workflows/ci.yml`) automates step 2 — three test modes, a fmt/clippy gate
+  for the quality tests, snapshot approval, the zero-runtime-dependency check, the four
+  `cargo package` invocations, a Windows/macOS core+egui job, and the MSRV check.
+  Known pre-existing drift it deliberately does **not** gate on: `src/style.rs` is not
+  `cargo fmt` clean, and `src/` carries clippy lints (see `CHANGELOG.md` [Unreleased]).
 
 ## Version history note
 

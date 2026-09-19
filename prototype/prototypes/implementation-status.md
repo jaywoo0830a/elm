@@ -382,7 +382,8 @@ cargo test --workspace --all-features # 156  (0.6.1: 142)
 |---|---|
 | ✅ 구현 | `mount!`, `mount_with`, `flush`, `advance(ms)`, `pump`, `press_key`, `press_enter`, `type_(값)`, `click(라벨)`, `expect_text`, `text`, `render_tree`, `set_mock1..3` |
 | ✅ v0.4 | `.mock(fn, impl)` / `.mock2` / `.mock3` (소유 빌더), `assert_text` / `assert_visible` / `assert_hidden`, `type_into(셀렉터, 값)` — 셀렉터는 태그명(`input`/`textarea`) 또는 클래스명, `toggle(label)` / `set_check(label, v)`, `has_pending_after()` |
-| ❌ 미구현 | 2인자 `type_(셀렉터, 값)`(오버로드 불가 → `type_into` 사용), `advance(300ms)`(리터럴 불가 → `advance(300)`), `Cart(items: vec![…])` 생성자 슈가, `mount(ui! { <Counter /> })`(헤드리스 엘리먼트 마운트), `insta` 스냅샷, 시간여행 |
+| ❌ 미구현 | 2인자 `type_(셀렉터, 값)`(오버로드 불가 → `type_into` 사용), `advance(300ms)`(리터럴 불가 → `advance(300)`), `Cart(items: vec![…])` 생성자 슈가, `mount(ui! { <Counter /> })`(헤드리스 엘리먼트 마운트), 시간여행 |
+| ✅ 추가 (Unreleased) | `insta` 스냅샷(`tests/snapshots.rs`, 사양서 8.3) · `trybuild` 컴파일 실패 계약(`tests/compile_fail.rs`) · `proptest` 모델 기반(`tests/properties.rs`) |
 
 ### 3.6 플랫폼 / 어댑터
 
@@ -392,6 +393,9 @@ cargo test --workspace --all-features # 156  (0.6.1: 142)
   - 렌더 루프 / 이벤트 펌프 / 상태 변경 시 자동 재렌더 없음 (테스트가 `frame()` + `refresh()`를 직접 호출)
   - 어댑터 매핑은 `Col/Row/Text/Button/Input/Raw` 6개뿐 — 사양서 7.2 표의 `SidePanel`, `TopBottomPanel`, `ScrollArea`, `CollapsingHeader`, `Window`, `menu`, `Plot`, `Table`, `Dock` 전부 없음
 - `css!` 자기등록은 `.init_array` ctor → Linux/macOS만, **wasm 미지원**
+- gpui: **테스트가 하나도 없었다** → Unreleased에서 3개 추가(gpui-kit `test-support`
+  헤드리스 하네스). 상호작용(클릭→상태) 단언은 어댑터가 요소에 `ElementId`를
+  등록해야 가능하므로 아직 렌더 루프 수준까지만 고정했다.
 
 ### 3.7 구조 / 성능 (사양서 11, 9)
 
@@ -557,7 +561,7 @@ rustc --edition 2021 --test --emit=metadata \
 | `s39_router_match.rs` | `{match route { … => ui! { <Home /> } }}` | ✅ |
 | `w5.rs` | `<Button disabled={n > 0} on_click={n = 0}>` | ✅ |
 
-### 6.4 기존 테스트 현황 (워크스페이스 138개 통과, `--all-features` 142개)
+### 6.4 기존 테스트 현황 (워크스페이스 285개 통과, `--all-features` 292개, `--release` 285개)
 
 ```
 tests/counter.rs   tests/todo.rs    tests/effects.rs   tests/lifecycle.rs
@@ -570,6 +574,61 @@ tests/sugar.rs     tests/store.rs   tests/subs.rs      tests/callbacks.rs
                    crates/elm-magic-egui/tests/adapter.rs
 ```
 
+**P0 품질 테스트 (Unreleased, 54개 — `src/`를 보지 않고 사양서·공개 API만으로 작성)**
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `tests/contract.rs` | 9 (+2 serde) | 사양서 12의 7계약 (같은 상태→같은 트리, 렌더 순수성, 형제 격리, 키 변경 초기화, flush 전 효과 미실행·중복 실행 없음, 17태그 직렬화, 읽기가 store를 쓰지 않음) |
+| `tests/determinism.rs` | 9 | 클래스 나열 순서 / 호출 반복 / 인스턴스 개수 / `refresh`가 결과를 바꾸지 않음, `a11y_tree`·`roles` 결정성, 목 등록 범위 |
+| `tests/isolation.rs` | 7 | 동시 인스턴스의 지역 상태·구독 격리, keyed 슬롯 20사이클 무누수(8↔2), store 범위, 서로 다른 store의 슬롯 분리 |
+| `tests/edge_cases.rs` | 16 | 빈/단일/1000항목, 100단계 중첩, 200 keyed 항목, 한글·결합문자·ZWJ·10KB·여러 줄 TextArea, 중복 라벨(첫 매치), `advance(0)`, 놓친 틱 미보충, 2^32ms·u64::MAX 틱, 정수 오버플로(디버그 panic/릴리스 래핑), class 공백 정규화 |
+| `tests/diagnostics.rs` | 5 | panic 메시지의 prop 이름·키 이름·원인+해결책, 효과 panic 전파, 전개 내부(`__elm`) 미노출 |
+| `tests/widget_matrix.rs` | 8 | 17개 빌트인 태그의 `kind/tag/role/interactive/disabled/label/children` **전체 표** + 접근성 이름 + 조용히 버려지는 속성(현재 의미론) |
+
+**P1 품질 테스트 (Unreleased, 15개 — dev 의존성 `trybuild`/`proptest`/`insta` 추가)**
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `tests/compile_fail.rs` + `tests/compile_fail/ui/*.rs` | 1 (5 케이스) | 사양서가 "컴파일 에러"라고 약속한 것들을 `.stderr`로 고정 — 미지원 태그, 모르는 CSS 속성(지원 36종 나열), 팔레트 토큰 오타, 클로저 안의 효과(`<-`), 클릭 이벤트의 `{_}` |
+| `tests/properties.rs` | 7 | proptest 모델 기반 — 카운터=정수 산술, 리스트=Vec(순서), keyed 재정렬=키별 상태, 입력=문자열 왕복, 디바운스="마지막 값 1회", 캐스케이드=선언 순서, 렌더 멱등성 |
+| `tests/snapshots.rs` + `tests/snapshots/*.snap` | 5 (+1 serde) | 사양서 8.3의 `insta::assert_snapshot!` — Counter/갤러리의 `render_tree`·`a11y_tree`·JSON 표현 회귀 |
+
+- dev 의존성은 배포 그래프에 들어가지 않는다 — `cargo tree -p elm-magic -e normal`은
+  여전히 `elm-magic-macros` + `enum_dispatch`뿐이다.
+- `.stderr`는 툴체인에 민감하다: `TRYBUILD=overwrite cargo test --test compile_fail`.
+  스냅샷 갱신은 `INSTA_UPDATE=always cargo test --test snapshots` (또는 `cargo insta review`).
+
+**P2 품질 테스트 (Unreleased, 11개 + CI 워크플로)**
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `crates/elm-magic-egui/tests/adapter.rs` (패리티 절) | 4 | egui 버튼 ⊇ 헤드리스 버튼, `Pass::style_of` == 코어 `resolved_style`, `display:none`(그리지 않지만 헤드리스에는 남음), disabled 클릭(egui 무시 / 헤드리스 디스패치) |
+| `crates/elm-magic-gpui/tests/adapter.rs` | 3 | **이 크레이트의 첫 테스트** — gpui-kit `test-support` 헤드리스 하네스로 렌더 루프/다중 프레임/두 `ElmView` 공존 |
+| `tests/resource_budget.rs` | 4 | 효과 100사이클·지연 큐·구독·순차 인스턴스 50회에서 아레나 자원 무누수 |
+| `.github/workflows/ci.yml` | — | RELEASING 2단계 자동화 (테스트 3모드, 테스트 fmt/clippy, 스냅샷 승인, 런타임 의존성 0, `cargo package` ×4, Windows/macOS 코어+egui, MSRV 1.85) |
+
+- CI는 **기존 드리프트를 게이트하지 않는다**: `src/style.rs`가 `cargo fmt` 클린이 아니고
+  `src/`에 clippy 린트가 남아 있어, fmt/clippy 게이트는 테스트 파일 범위로 한정했다.
+
+**실측으로 확인한 현재 의미론 (P0에서 새로 문서화)**
+
+- `#[store]`는 **아레나(=앱 인스턴스) 단위** — 한 인스턴스 안에서는 모든 컴포넌트가
+  공유하지만, 새 인스턴스는 초기값에서 시작한다. 실제 앱은 아레나가 하나라 체감상
+  전역 상태이고, 테스트에서는 인스턴스 간 격리를 만든다.
+- 목(mock) 등록은 **프로세스 전역** — 앱 인스턴스에 묶이지 않는다. 테스트 바이너리는
+  파일 단위로 분리되므로 파일 경계는 안전하다.
+- keyed 슬롯은 마운트/언마운트 20회 반복에도 **8↔2로 안정**(누수 없음).
+- `advance`는 **놓친 틱을 몰아서 실행하지 않는다** (1ms 틱에 `advance(10_000)` → 1회).
+- `on_tick(0ms)`는 주기가 0이라 `advance()`가 끝나지 않을 수 있어 자동 테스트에서 제외.
+- 어휘에 없는 **태그 셀렉터**는 조용히 등록된다 — README/사양서 6.1은 "잘못된
+  셀렉터는 컴파일 에러"라고 약속하지만 `css! { h1 { gap: 1; } }`는 통과해 매치될 수
+  없는 죽은 규칙이 된다 (속성·값·토큰은 컴파일 에러). 검증이 붙으면 테스트를 뒤집는다.
+- `ctx.arena.stream_count()`는 **살아 있는 구독 태스크 수** — 값을 모두 밀어낸 스트림은
+  **다음 `pump()`에서** 정리된다(누적 없음). 첫 `pump()` 직후에는 아직 1이다.
+- 어댑터의 의도된 발산: egui는 disabled 클릭을 무시(헤드리스는 디스패치),
+  `display:none`은 그리지 않지만 헤드리스 트리에는 남는다. `Pass::style_of`는 코어
+  `resolved_style`과 같은 값이어야 한다.
+
 - `tests/bug_report.rs` — 버그 리포트 회귀 (v0.5 3건 + v0.6.1 BEM 수정자, 9개)
 
 - `tests/syntax.rs` — 매크로 문법 픽스 7건 (범위/메서드/컴마/축약/분기 통일/캡처/소유 반복)
@@ -580,6 +639,7 @@ tests/sugar.rs     tests/store.rs   tests/subs.rs      tests/callbacks.rs
 - `tests/subs.rs` — `on_message`(+스트림 목), 이벤트 버스, `on_navigate`(String/타입), `on_net_change`
 - `tests/callbacks.rs` — 콜백 prop(`fn(T)`)·`_` 전달값·필수 prop panic, 컴포넌트 children(중첩 포함)
 - `tests/integration.rs` — store + keyed + 구독 + 콜백 + children 를 한 트리에서 통합 검증
+
 
 ---
 

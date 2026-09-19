@@ -14,3 +14,8 @@ elm-magic = { path = "../..", version = "0.7.4" }
 # gpui-kit 0.6 re-exports GPUI itself (`gpui_kit::*`), gpui-base (`gpui_kit::base`)
 # and gpui-component (`gpui_kit::component`) — the styled layer + theme tokens.
 gpui-kit = "0.6"
+
+[dev-dependencies]
+# 헤드리스 UI 테스트 하네스 (`#[gpui_kit::test]` + `TestAppContext` + `gpui_kit::test`).
+# README/TESTING.md가 안내하는 대로 **dev-dependencies에서** 기능을 켠다.
+gpui-kit = { version = "0.6", features = ["test-support"] }

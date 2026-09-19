@@ -3,6 +3,99 @@
 이 프로젝트는 [Semantic Versioning](https://semver.org/)을 따른다.
 0.x 동안에는 마이너(0.5 → 0.6)가 기능 확장, 패치(0.5.0 → 0.5.1)가 버그 픽스를 뜻한다.
 
+## [Unreleased]
+
+### Tests — 품질 테스트 3단계 (기본 모드 79개, `--all-features` 82개)
+
+`src/`를 읽지 않고 **사양서 · README · 공개 API만으로** 작성한 블랙박스 품질
+테스트를 추가했다. 구현이 아니라 **계약**을 검사하므로, 계약이 깨지면 이 파일들이
+가장 먼저 알려준다.
+
+#### P0 — 계약 · 결정성 · 격리 · 경계값 · 진단 · 위젯 표 (55개, 새 의존성 0)
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `tests/contract.rs` | 9 (+2 serde) | 사양서 12의 7계약 — 같은 상태→같은 트리, 렌더 순수성, 형제 격리, 키 변경 초기화, flush 전 효과 미실행(중복 실행 없음), 17태그 직렬화, 읽기가 store를 쓰지 않음 |
+| `tests/determinism.rs` | 9 | 클래스 나열 순서·호출 반복·인스턴스 개수·`refresh`가 결과를 바꾸지 않음, `a11y_tree`/`roles` 결정성, 목 등록 범위 |
+| `tests/isolation.rs` | 7 | 동시에 살아 있는 두 인스턴스의 지역 상태·구독 격리, keyed 슬롯 20사이클 무누수(8↔2), store 범위, 서로 다른 store의 슬롯 분리 |
+| `tests/edge_cases.rs` | 17 | 빈/단일/1000항목 리스트, 100단계 중첩, 200개 keyed 항목, 한글·결합문자·ZWJ 이모지·10KB 문자열·여러 줄 TextArea, 중복 라벨(첫 매치), `advance(0)`, 놓친 틱 미보충, 2^32ms·u64::MAX 틱, 정수 오버플로(디버그 panic / 릴리스 래핑), class 공백 정규화, 죽은 태그 셀렉터(아래) |
+| `tests/diagnostics.rs` | 5 | panic 메시지가 **누락 prop 이름 / 키 이름 / 원인 + 해결책**을 담는지, 효과 panic이 flush에서 전파되는지, 전개 내부(`__elm`)가 새지 않는지 |
+| `tests/widget_matrix.rs` | 8 | 17개 빌트인 태그의 `kind/tag/role/interactive/disabled/label/children` **전체 표**를 못 박음 + 접근성 이름 + 조용히 버려지는 속성(현재 의미론) |
+
+#### P1 — 컴파일 실패 계약 · 모델 기반 · 스냅샷 (13개, dev 의존성 3종 추가)
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `tests/compile_fail.rs` + `tests/compile_fail/ui/*.rs` | 1 (5 케이스) | 사양서가 "컴파일 에러"라고 약속한 것들을 `.stderr`로 고정 — 미지원 태그(`<h1>`), 모르는 CSS 속성(지원 36종을 메시지에 나열), 팔레트 토큰 오타, 클로저 안의 효과(`<-`), 클릭 이벤트의 `{_}` |
+| `tests/properties.rs` | 7 | proptest 모델 기반 — 카운터=정수 산술, 리스트=Vec(순서 포함), keyed 재정렬=키별 상태, 입력=문자열 왕복, 디바운스="마지막 값 1회", 캐스케이드=선언 순서, 렌더 멱등성 |
+| `tests/snapshots.rs` + `tests/snapshots/*.snap` | 5 (+1 serde) | 사양서 8.3의 `insta::assert_snapshot!` — Counter/갤러리의 `render_tree`·`a11y_tree`·JSON 표현 회귀 |
+
+dev 의존성은 `trybuild` / `proptest` / `insta`(json) 3종이며 **배포 그래프는 그대로**다
+(`cargo tree -p elm-magic -e normal`에 여전히 매크로 + `enum_dispatch`뿐).
+
+#### P2 — 어댑터 패리티 · 자원 회귀 · CI (11개 + 워크플로)
+
+| 파일 | 개수 | 고정하는 것 |
+|---|---|---|
+| `crates/elm-magic-egui/tests/adapter.rs` (패리티 절) | 4 | egui가 그리는 버튼이 헤드리스 계약을 덮는지, `Pass::style_of`가 **코어 `resolved_style`과 같은 값**인지, `display:none`은 그리지 않지만 헤드리스 트리에는 남는지, disabled 클릭이 egui에서는 무시되고 헤드리스에서는 디스패치되는지(의도된 발산) |
+| `crates/elm-magic-gpui/tests/adapter.rs` | 3 | **이 크레이트의 첫 테스트.** gpui-kit `test-support`의 헤드리스 하네스로 실제 창에서 렌더 루프가 도는지, 여러 프레임/두 `ElmView`가 공존하는지 (`#[gpui_kit::test]` + `TestAppContext`) |
+| `tests/resource_budget.rs` | 4 | 효과 100사이클·지연 큐·구독·순차 인스턴스 50회에서 아레나 자원이 쌓이지 않는지 (`keyed_slot_count` / `stream_count` / `has_pending_after`) |
+| `.github/workflows/ci.yml` | — | RELEASING 2단계 자동화 — 테스트 3모드 + 테스트 파일 fmt + 테스트 코드 clippy 경고 0 + 스냅샷 승인 확인 + 런타임 의존성 0 검사 + `cargo package` ×4, Windows/macOS는 코어+egui, MSRV(1.85) check |
+
+### 실측으로 새로 확인해 문서화한 현재 의미론
+
+- **`#[store]`는 아레나(=앱 인스턴스) 단위다** — 한 인스턴스 안에서는 모든
+  컴포넌트가 공유하지만, 새로 만든 인스턴스는 초기값에서 시작한다. 실제 앱은
+  아레나가 하나뿐이라 체감상 전역 상태이고, 테스트에서는 인스턴스 간 격리를
+  만들어 준다 (`tests/isolation.rs::a_new_instance_starts_from_the_store_initial_value`).
+- **목(mock) 등록은 프로세스 전역이다** — 앱 인스턴스에 묶이지 않으므로, 같은
+  테스트 바이너리의 다른 인스턴스도 목을 본다. 테스트는 파일 단위로 프로세스가
+  분리되므로 파일 경계는 안전하다 (`tests/determinism.rs::mock_registry_is_process_global_current_semantics`).
+- **keyed 슬롯은 마운트/언마운트 20회 반복에도 8↔2로 안정** — 누수 없음
+  (`tests/isolation.rs::keyed_slots_do_not_accumulate_across_cycles`).
+- **`advance`는 놓친 틱을 몰아서 실행하지 않는다** — 1ms 틱에 `advance(10_000)`은
+  한 번만 발화한다 (`tests/edge_cases.rs`).
+- **`on_tick(0ms)`는 자동 테스트에서 제외** — 주기가 0이라 `advance()`가 끝나지
+  않을 수 있다. 사양서에 최소 주기 규칙이 없다 (수동 확인용 주석으로 남김).
+- **어휘에 없는 태그 셀렉터는 조용히 등록된다** — README/사양서 6.1은 "잘못된
+  셀렉터는 컴파일 에러"라고 약속하지만, `css! { h1 { gap: 1; } }`는 오류 없이
+  통과해 **매치될 수 없는 죽은 규칙**이 된다 (속성·값·토큰은 컴파일 에러다).
+  현재 의미론으로 고정했고, 검증이 붙으면 테스트를 뒤집는다
+  (`tests/edge_cases.rs::unknown_tag_selector_is_silently_accepted`).
+- **`ctx.arena.stream_count()`는 "살아 있는 구독 태스크 수"** — 값을 모두 밀어낸
+  스트림은 **다음 `pump()`에서** 정리되어 수가 줄어든다(누적되지 않는다).
+  첫 `pump()` 직후에는 아직 1이다 (`tests/resource_budget.rs`).
+- **어댑터의 의도된 발산** — egui는 `disabled` 버튼 클릭을 무시하고(헤드리스는
+  디스패치), `display:none`은 그리지 않지만 헤드리스 트리·접근성에는 남는다.
+  `Pass::style_of`는 코어 `resolved_style`과 **같은 값**을 내야 한다
+  (`crates/elm-magic-egui/tests/adapter.rs` 패리티 절).
+
+### 기존 코드의 드리프트 (별도 정리 대상 — 이번 변경은 건드리지 않았다)
+
+- `src/style.rs`는 `cargo fmt --all --check`를 통과하지 못한다(커밋된 상태의 포맷
+  드리프트). 그래서 CI의 fmt 게이트는 **테스트 파일만** 검사한다.
+- `src/`에 clippy 린트가 남아 있다 (`elm-magic-macros` 6건, `elm-magic-gpui` 9건,
+  `elm-magic` 2건). 그래서 CI의 clippy 게이트는 **테스트 코드 경고 0**을 강제하고
+  기존 린트는 비차단으로 보고만 한다.
+- `tests/callbacks.rs` · `tests/integration.rs`에 기존 clippy 경고 3건
+  (`struct update has no effect`)이 있다 — 손대지 않았다. 원인은 테스트 코드가 아니라
+  **`view!` 전개 코드**다: 매크로가 모든 prop을 지정한 뒤에도 `..Default::default()`를
+  붙여 `needless_update`가 발생한다 (매크로 쪽에서 정리하면 사라진다).
+
+### 주의 — `.stderr`는 툴체인에 민감하다
+
+`tests/compile_fail/ui/*.stderr`는 rustc 메시지를 그대로 담으므로 툴체인을 올리면
+달라질 수 있다. 갱신은 `TRYBUILD=overwrite cargo test --test compile_fail` 후
+**diff 리뷰**. 스냅샷 갱신은 `INSTA_UPDATE=always cargo test --test snapshots`
+(또는 `cargo insta review`).
+
+### Tests
+
+- `cargo test --workspace` = **285** (0.7.4: 206), `--all-features` = **292** (210),
+  `--release` = **285**, **경고 0개**.
+- `cargo package` ×4 통과(RELEASING 2단계와 동일한 patch 검증 포함),
+  `cargo tree -p elm-magic -e normal`에 외부 런타임 크레이트 0.
+
 ## [0.7.4] — 2026-09-18
 
 세 번째 버그 리포트의 남은 3항목(11~13)을 고쳤다. 공개 API는 **추가만** 있다:
