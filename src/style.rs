@@ -1360,7 +1360,8 @@ pub fn init_styles() {
         let rec = recorded().lock().unwrap();
         rec.clone()
     };
-    let entries: Vec<(&str, StyleSpec)> = owned.iter().map(|(s, spec)| (s.as_str(), *spec)).collect();
+    let entries: Vec<(&str, StyleSpec)> =
+        owned.iter().map(|(s, spec)| (s.as_str(), *spec)).collect();
     apply(entries);
 }
 

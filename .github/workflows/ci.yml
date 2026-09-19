@@ -30,10 +30,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: fmt (품질 테스트 파일)
-        # `src/style.rs`에 **기존** 포맷 드리프트가 있어 `cargo fmt --all --check`는
-        # 아직 통과하지 못한다 (src/ 정리는 별도 작업). 새로 추가한 테스트 파일만 검사한다.
-        run: rustfmt --check --edition 2021 tests/*.rs tests/compile_fail/ui/*.rs crates/*/tests/*.rs
+      - name: fmt (워크스페이스 전체)
+        # 0.7.5에서 `cargo fmt --all`로 기존 드리프트(`src/style.rs`)를 정리했다 —
+        # 이제 전체를 검사한다.
+        run: cargo fmt --all --check
 
       - name: clippy (품질 테스트 코드 경고 0)
         # 기존 `src/`(elm-magic-macros, elm-magic-gpui, elm-magic)에 clippy 린트가 남아

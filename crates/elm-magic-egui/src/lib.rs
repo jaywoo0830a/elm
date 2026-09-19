@@ -20,7 +20,21 @@
 //!
 //! 스타일이 적용되는 태그: `Col` `Row` `Text` `Strong` `Button` `Banner`
 //! `Tab` `Th` `Td` `Check` `Spinner` `Divider` `Progress` `Modal`.
-//! (`Input`/`TextArea`/`Raw`는 플랫폼 위에 맡다.)
+//!
+//! ## 스타일 리셋 (기본값 없음)
+//!
+//! 어댑터는 그리기 전에 egui의 기본 스타일을 **전부 리셋**한다 —
+//! [the-new-css-reset](https://github.com/elad2412/the-new-css-reset)의
+//! `* { all: unset; display: revert; }`와 같은 출발점이다.
+//! 즉 **보이는 것은 전부 `css!`가 선언한 것뿐**이고, egui가 기본으로 칠하던
+//! 채움·테두리·여백·간격·라운딩·확장·그림자·글자 크기 계단은 모두 사라진다.
+//! ([`reset_style_of`] / [`reset_style`])
+//!
+//! `display: revert`에 해당하는 것만 남긴다: 레이아웃(가로/세로/줄바꿈)과 상호작용.
+//! `css!` 어휘로 **다시 칠할 수 없는 최소 기능**은 예외로 유지한다 — 글자색
+//! (`fg_stroke`), 캐럿, 텍스트 선택, 하이퍼링크. 반대로 체크박스 박스나 스피너
+//! 크기처럼 표현 수단이 없는 장식은 리셋되므로, 필요하면 `width`/`font-size` 같은
+//! 선언으로 지정한다.
 
 use elm_magic::style::{
     Align as StyleAlign, Color, Cursor, Edges, Len, Palette, ResolvedStyle, State, Token,
@@ -63,6 +77,9 @@ pub fn render(ui: &mut egui::Ui, tree: &Element, arena: &mut Arena) -> Pass {
 }
 
 /// 팔레트를 지정해 렌더한다 (사양서 6.3 — 테마는 팔레트다).
+///
+/// 그리기 전에 egui 기본 스타일을 리셋한다([`reset_style_of`]). 리셋은 **이 렌더의
+/// 스코프 안에서만** 적용되므로, 호출자의 다른 egui 위젯 스타일은 건드리지 않는다.
 pub fn render_with_palette(
     ui: &mut egui::Ui,
     tree: &Element,
@@ -79,8 +96,12 @@ pub fn render_with_palette(
         inherited: Vec::new(),
         node: 0,
         palette,
+        main_budget: None,
     };
-    render_el(&mut walk, ui, tree, arena);
+    ui.scope(|ui| {
+        reset_style(ui, palette);
+        render_el(&mut walk, ui, tree, arena);
+    });
     walk.pass
 }
 
@@ -94,6 +115,9 @@ struct Walk<'a> {
     /// 이번 프레임 노드 순번 — 메모리 키를 안정적으로 만든다.
     node: u32,
     palette: &'a Palette,
+    /// 부모가 배분한 **주축 크기**(px) — `width/height: fill`과 `justify` 컨테이너가 쓴다.
+    /// 뒤 형제의 몫을 예약한 결과라서 형제를 밀어내지 않는다.
+    main_budget: Option<f32>,
 }
 
 impl<'a> Walk<'a> {
@@ -175,17 +199,135 @@ fn cursor_of(c: Cursor) -> egui::CursorIcon {
     }
 }
 
-/// 테이너 레이아웃 — `align`은 교차축(items), `justify`는 주축(content).
+/// 리셋 후 기본 글자 크기 — `font-size`를 선언하지 않은 모든 텍스트.
+pub const BASE_FONT_SIZE: f32 = 14.0;
+
+/// egui의 기본 스타일을 **전부 리셋**한 `Style`을 만든다 (기본값 없음).
+///
+/// [the-new-css-reset](https://github.com/elad2412/the-new-css-reset)의
+/// `* { all: unset; display: revert; }`에 대응한다. 장식은 전부 사라지고,
+/// 보이는 것은 `css!` 선언뿐이다. `css!`로 다시 칠할 수 없는 최소 기능
+/// (글자색 · 캐럿 · 텍스트 선택 · 하이퍼링크)만 남긴다.
+pub fn reset_style_of(palette: &Palette) -> egui::Style {
+    let text = color32(palette.get(Token::Text));
+    let dim = color32(palette.get(Token::TextDim));
+    let primary = palette.get(Token::Primary);
+    let bg = palette.get(Token::Background);
+    // 팔레트에서 밝기를 유도한다 (`background` 토큰) — `Palette`에는 dark 플래그가 없다.
+    let dark = (u32::from(bg.r) * 299 + u32::from(bg.g) * 587 + u32::from(bg.b) * 114) / 1000 < 128;
+
+    let mut style = egui::Style::default();
+
+    // 애니메이션 없음 (`all: unset`)
+    style.animation_time = 0.0;
+
+    // 글자 크기 계단을 없앤다 (`h1~h6 { font-size: inherit }`).
+    // 기본 맵의 **키를 그대로 두고 값만** 바꾼다 — egui가 TextStyle을 늘려도 안전하다.
+    style.text_styles = style
+        .text_styles
+        .keys()
+        .map(|ts| {
+            let font = if *ts == egui::TextStyle::Monospace {
+                egui::FontId::monospace(BASE_FONT_SIZE)
+            } else {
+                egui::FontId::proportional(BASE_FONT_SIZE)
+            };
+            (ts.clone(), font)
+        })
+        .collect();
+
+    // 여백·간격 0 (`margin: 0; padding: 0; gap: 0`)
+    let sp = &mut style.spacing;
+    sp.item_spacing = egui::Vec2::ZERO;
+    sp.window_margin = egui::Margin::ZERO;
+    sp.button_padding = egui::Vec2::ZERO;
+    sp.menu_margin = egui::Margin::ZERO;
+    sp.menu_spacing = 0.0;
+    sp.indent = 0.0;
+    sp.interact_size = egui::Vec2::ZERO;
+    sp.slider_width = 0.0;
+    sp.slider_rail_height = 0.0;
+    sp.combo_width = 0.0;
+    sp.text_edit_width = 0.0;
+    sp.icon_width = 0.0;
+    sp.icon_width_inner = 0.0;
+    sp.icon_spacing = 0.0;
+    sp.extra_text_line_spacing = 0.0;
+    sp.default_area_size = egui::Vec2::ZERO;
+    sp.scroll.bar_width = 0.0;
+    sp.scroll.bar_inner_margin = 0.0;
+    sp.scroll.bar_outer_margin = 0.0;
+    sp.scroll.handle_min_length = 0.0;
+    sp.scroll.floating = false;
+
+    // 표면: 아무것도 칠하지 않는다
+    let v = &mut style.visuals;
+    v.dark_mode = dark;
+    v.panel_fill = egui::Color32::TRANSPARENT;
+    v.window_fill = egui::Color32::TRANSPARENT;
+    v.window_stroke = egui::Stroke::NONE;
+    v.window_corner_radius = egui::CornerRadius::ZERO;
+    v.window_shadow = egui::Shadow::NONE;
+    v.popup_shadow = egui::Shadow::NONE;
+    v.menu_corner_radius = egui::CornerRadius::ZERO;
+    v.window_highlight_topmost = false;
+    v.faint_bg_color = egui::Color32::TRANSPARENT;
+    v.extreme_bg_color = egui::Color32::TRANSPARENT;
+    v.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
+    v.code_bg_color = egui::Color32::TRANSPARENT;
+    v.striped = false;
+    v.resize_corner_size = 0.0;
+    v.weak_text_color = Some(dim);
+
+    // 위젯 5상태 전부 리셋 — hover/active도 칠하지 않으므로 `:hover`를 선언해야 보인다
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.bg_fill = egui::Color32::TRANSPARENT;
+        w.weak_bg_fill = egui::Color32::TRANSPARENT;
+        w.bg_stroke = egui::Stroke::NONE;
+        w.corner_radius = egui::CornerRadius::ZERO;
+        w.expansion = 0.0;
+        w.fg_stroke = egui::Stroke::new(1.0, text);
+    }
+
+    // `css!`로 다시 칠할 수 없는 최소 기능 (기능이 사라지면 안 되는 것들)
+    v.override_text_color = Some(text);
+    v.hyperlink_color = color32(primary);
+    v.warn_fg_color = color32(palette.get(Token::Warn));
+    v.error_fg_color = color32(palette.get(Token::Error));
+    v.text_cursor.stroke = egui::Stroke::new(1.0, text);
+    v.selection.bg_fill =
+        egui::Color32::from_rgba_unmultiplied(primary.r, primary.g, primary.b, 96);
+    v.selection.stroke = egui::Stroke::new(1.0, text);
+
+    style
+}
+
+/// `ui`의 스타일을 리셋된 것으로 **교체**한다 ([`reset_style_of`] 참고).
+///
+/// 어댑터는 [`render_with_palette`] 안에서 자동으로 부른다. 사용자가 직접 만든
+/// egui 위젯도 같은 출발점에서 시작하려면 이 함수를 쓰면 된다.
+pub fn reset_style(ui: &mut egui::Ui, palette: &Palette) {
+    *ui.style_mut() = reset_style_of(palette);
+}
+
+/// 테이너 레이아웃 — `align`은 교차축(items)이다.
+///
+/// 주축 정렬(`justify`)은 여기서 하지 않는다: egui의 `Layout::main_align`은 자식 배치가
+/// 아니라 **위젯 내부** 정렬(예: 버튼 글자)에 쓰인다. 남는 공간을 앞에 넣는 일은
+/// [`container`]가 직접 한다.
 fn layout_of(style: &ResolvedStyle, vertical: bool) -> egui::Layout {
     let cross = align_of(style.align);
-    let layout = if vertical {
+    if vertical {
         egui::Layout::top_down(cross)
     } else {
-        egui::Layout::left_to_right(cross)
-    };
-    match style.justify {
-        Some(j) => layout.with_main_align(align_of(Some(j))),
-        None => layout,
+        // `wrap: true` → egui의 main_wrap (0.7.4에는 읽지 않아 한 줄로 넘쳤다)
+        egui::Layout::left_to_right(cross).with_main_wrap(style.wrap == Some(true))
     }
 }
 
@@ -279,20 +421,36 @@ fn text_widget(
 }
 
 /// 컨테이너/위젯 크기 (`width`/`height`/`min`/`max`).
-fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle) {
+///
+/// `budget`은 부모가 배분한 주축 크기다 — `fill`의 실제 값이 되고, 뒤 형제의 몫은
+/// 이미 빠져 있다. 선언한 `width/height`(px)가 있으면 그쪽이 이긴다.
+fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle, budget: Option<f32>) {
+    let horizontal = ui.layout().main_dir().is_horizontal();
+    if let Some(b) = budget.filter(|b| b.is_finite()) {
+        if horizontal {
+            ui.set_width(b);
+        } else {
+            ui.set_height(b);
+        }
+    }
     match style.width {
         Some(Len::Px(v)) => ui.set_width(v),
-        Some(Len::Fill) => {
+        // `fill`은 부모가 배분한 예산이 없을 때만 남은 폭을 쓴다 (루트 요소 등)
+        Some(Len::Fill) if budget.is_none() => {
             let available = ui.available_width();
-            ui.set_width(available);
+            if available.is_finite() {
+                ui.set_width(available);
+            }
         }
         _ => {}
     }
     match style.height {
         Some(Len::Px(v)) => ui.set_height(v),
-        Some(Len::Fill) => {
+        Some(Len::Fill) if budget.is_none() => {
             let available = ui.available_height();
-            ui.set_height(available);
+            if available.is_finite() {
+                ui.set_height(available);
+            }
         }
         _ => {}
     }
@@ -308,6 +466,182 @@ fn apply_size(ui: &mut egui::Ui, style: &ResolvedStyle) {
     if let Some(v) = style.max_height {
         ui.set_max_height(v);
     }
+}
+
+// ─ 주축 크기 측정 (fill 배분용) ──────────────────────────────
+
+/// `padding`의 주축 합 (가로면 좌우, 세로면 상하).
+fn padding_main(style: &ResolvedStyle, horizontal: bool) -> f32 {
+    match style.padding {
+        Some(p) if horizontal => p.left + p.right,
+        Some(p) => p.top + p.bottom,
+        None => 0.0,
+    }
+}
+
+/// 텍스트의 실제 크기(주축 방향) — egui 폰트로 잰다 (선언한 크기·스타일 반영).
+fn text_extent(
+    ui: &egui::Ui,
+    text: &str,
+    style: &ResolvedStyle,
+    bold: bool,
+    horizontal: bool,
+) -> f32 {
+    let rich = rich(text, style, bold);
+    let size = egui::WidgetText::from(rich)
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        )
+        .size();
+    if horizontal {
+        size.x
+    } else {
+        size.y
+    }
+}
+
+/// 위젯 하나의 **주축 방향 고정 크기** 추정. `None` = 가변(fill/justify).
+///
+/// 정확한 값이 필요한 게 아니다 — 뒤 형제의 몫을 **예약**하고 남는 폭을 가변
+/// 자식에게 나눠주기 위한 근사치다 (버그 3: `width: fill`이 형제 자리를 먹던 문제).
+fn intrinsic_main(walk: &Walk<'_>, ui: &egui::Ui, el: &Element, horizontal: bool) -> Option<f32> {
+    let style = el.resolved_style_in(
+        &walk.ancestors,
+        State::new(false, false, false, el.is_disabled()),
+        walk.parent_style(),
+        walk.palette,
+    );
+    if style.is_display_none() {
+        return Some(0.0);
+    }
+    match if horizontal {
+        style.width
+    } else {
+        style.height
+    } {
+        Some(Len::Px(v)) => return Some(v + padding_main(&style, horizontal)),
+        Some(Len::Fill) => return None,
+        _ => {}
+    }
+    // `justify`가 있는 컨테이너는 남는 공간을 받아야 정렬이 의미를 갖는다 (버그 2).
+    // 가로 주축에서만 자동 확장한다 — 세로는 남은 높이가 패널 전체라 위험하다.
+    if horizontal && matches!(el, Element::Col(_) | Element::Row(_)) && style.justify.is_some() {
+        return None;
+    }
+    // `min-*`는 하한이다 (`.mid { min-height: 20 }` 같은 선언이 크기를 만든다)
+    let floor = if horizontal {
+        style.min_width
+    } else {
+        style.min_height
+    }
+    .unwrap_or(0.0);
+    let inline = |w: f32| Some(w.max(floor) + padding_main(&style, horizontal));
+    let pad = padding_main(&style, horizontal);
+    let text = |text: &str, bold: bool| text_extent(ui, text, &style, bold, horizontal);
+    match el {
+        Element::Text(TextEl { text: t, .. }) | Element::Td(TdEl { text: t, .. }) => {
+            inline(text(t, false))
+        }
+        Element::Strong(StrongEl { text: t, .. }) | Element::Th(ThEl { text: t, .. }) => {
+            inline(text(t, true) + pad)
+        }
+        Element::Banner(BannerEl { text: t, .. }) => inline(text(t, false)),
+        Element::Button(ButtonEl { text: t, .. }) => {
+            // 테두리는 주축 양쪽에 붙는다
+            let bw = if horizontal {
+                style.border_width.unwrap_or(0.0) * 2.0
+            } else {
+                0.0
+            };
+            inline(text(t, false) + pad + bw)
+        }
+        Element::Tab(TabEl { text: t, .. }) => inline(text(t, false) + pad),
+        Element::Check(CheckEl { label, .. }) => {
+            let icon = if horizontal {
+                ui.spacing().icon_width + ui.spacing().icon_spacing
+            } else {
+                0.0
+            };
+            inline(text(label, false) + icon)
+        }
+        // 폭을 선언하지 않은 입력은 남는 공간을 쓴다 (`width: fill`과 같다)
+        Element::Input(_) | Element::TextArea(_) => None,
+        // 컨테이너: 자식들의 고정 크기 + 간격 (가변 자식은 0으로 본다)
+        Element::Col(ColEl { children, .. }) | Element::Row(RowEl { children, .. }) => {
+            let child_horizontal = matches!(el, Element::Row(_));
+            let gap = if child_horizontal {
+                style.column_gap()
+            } else {
+                style.row_gap()
+            }
+            .unwrap_or(0.0);
+            let mut total = 0.0;
+            for c in children {
+                total += intrinsic_main(walk, ui, c, child_horizontal).unwrap_or(0.0);
+            }
+            total += gap * children.len().saturating_sub(1) as f32;
+            inline(total)
+        }
+        Element::Fragment(FragmentEl { children }) => {
+            let mut total = 0.0;
+            for c in children {
+                total += intrinsic_main(walk, ui, c, horizontal).unwrap_or(0.0);
+            }
+            inline(total)
+        }
+        // 자리 없는 것들(0) — 오버레이/그림자는 레이아웃을 차지하지 않는다
+        _ => inline(0.0),
+    }
+}
+
+/// 가변 자식(`fill` / `justify` 컨테이너 / 입력)에게 나눠줄 주축 크기와,
+/// 주축에 **남는 공간**(정렬용)을 계산한다.
+///
+/// 뒤 형제의 몫을 **먼저 예약**한 뒤 남은 공간을 가변 자식 수로 나눈다.
+/// 그래서 `width: fill`이 뒤 형제를 컨테이너 밖으로 밀어내지 않는다.
+/// 가변 자식이 하나라도 있으면 남는 공간은 그쪽이 먹으므로 정렬용 여유는 0이다.
+fn child_budgets(
+    walk: &Walk<'_>,
+    ui: &egui::Ui,
+    children: &[Element],
+    horizontal: bool,
+    gap: f32,
+) -> (Vec<Option<f32>>, f32) {
+    let available = if horizontal {
+        ui.available_width()
+    } else {
+        ui.available_height()
+    };
+    if !available.is_finite() || children.is_empty() {
+        return (vec![None; children.len()], 0.0);
+    }
+    let mut fixed_total = 0.0f32;
+    let mut flexible = 0usize;
+    let mut intrinsics = Vec::with_capacity(children.len());
+    for c in children {
+        let v = intrinsic_main(walk, ui, c, horizontal);
+        match v {
+            Some(v) => fixed_total += v,
+            None => flexible += 1,
+        }
+        intrinsics.push(v);
+    }
+    let gap_total = gap.max(0.0) * children.len().saturating_sub(1) as f32;
+    let remaining = (available - fixed_total - gap_total).max(0.0);
+    let per = if flexible > 0 {
+        remaining / flexible as f32
+    } else {
+        0.0
+    };
+    let extra = if flexible > 0 { 0.0 } else { remaining };
+    let budgets = intrinsics
+        .into_iter()
+        .map(|v| if v.is_none() { Some(per) } else { None })
+        .collect();
+    (budgets, extra)
 }
 
 /// 위젯 최소 크기 (버튼) — `width`/`height`(또는 `min-height`)가 있을 때만.
@@ -348,18 +682,23 @@ fn with_button_padding<R>(
     out
 }
 
-/// `cursor` + `opacity` + `visibility`를 UI/응답에 적용한다.
-fn decorate(ui: &mut egui::Ui, resp: egui::Response, style: &ResolvedStyle) -> egui::Response {
-    if style.hidden == Some(true) {
-        // 자리는 차지하되 안 보인다 (`visibility: hidden`)
-        ui.set_opacity(0.0);
-    } else if let Some(o) = style.opacity {
-        ui.set_opacity(o);
-    }
+/// `cursor`를 응답에 적용한다.
+///
+/// `opacity`/`visibility: hidden`은 여기서 다루지 않는다 — 그리기 **전에**
+/// 어댑터가 노드 스코프에 걸어야 한다(egui의 투명도는 이후에 추가되는 도형에만
+/// 적용되므로, 나중에 걸면 그 노드는 그대로 보이고 **뒤 형제가 투명해진다**).
+fn decorate(resp: egui::Response, style: &ResolvedStyle) -> egui::Response {
     match style.cursor {
         Some(c) => resp.on_hover_cursor(cursor_of(c)),
         None => resp,
     }
+}
+
+/// 글자색 — 선언한 `color`가 없으면 팔레트의 `text` (상속의 뿌리).
+fn text_color(style: &ResolvedStyle, palette: &Palette) -> egui::Color32 {
+    style
+        .color
+        .map_or_else(|| color32(palette.get(Token::Text)), color32)
 }
 
 /// 노드 하나를 그린 결과 (다음 프레임 hover/focus 판정용).
@@ -429,7 +768,41 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
     walk.ancestors.insert(0, el);
     walk.inherited.push(style);
 
-    // 응답을 내지 않는 태그(`Raw`/`Fragment`)는 상태를 기록하지 않는다
+    // 응답을 내지 않는 태그(`Raw`/`Fragment`)는 상태를 기록하지 않는다.
+    //
+    // `opacity`/`visibility: hidden`은 **그리기 전에** 노드 스코프에 건다 —
+    // egui의 투명도는 이후에 추가되는 도형에만 적용되므로, 나중에 걸면 그 노드는
+    // 그대로 보이고 뒤 형제가 투명해진다.
+    let opacity = if style.hidden == Some(true) {
+        Some(0.0)
+    } else {
+        style.opacity
+    };
+    let drawn = match opacity {
+        Some(o) => {
+            ui.scope(|ui| {
+                ui.set_opacity(o);
+                draw_body(walk, ui, el, arena, style, palette)
+            })
+            .inner
+        }
+        None => draw_body(walk, ui, el, arena, style, palette),
+    };
+
+    walk.inherited.pop();
+    walk.ancestors.remove(0);
+    write_state(ui.ctx(), id, drawn.rect, drawn.focused);
+}
+
+/// 노드 하나를 그린다 — 스타일 해석·투명도·조상 스택은 `render_el`이 끝냈다.
+fn draw_body<'a>(
+    walk: &mut Walk<'a>,
+    ui: &mut egui::Ui,
+    el: &'a Element,
+    arena: &mut Arena,
+    style: ResolvedStyle,
+    palette: &Palette,
+) -> Drawn {
     let mut drawn = Drawn {
         rect: egui::Rect::ZERO,
         focused: false,
@@ -438,17 +811,17 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
         Element::Text(TextEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
         Element::Strong(StrongEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, true);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
         Element::Banner(BannerEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
         Element::Spinner(SpinnerEl { .. }) => {
             let mut spinner = egui::Spinner::new();
@@ -464,12 +837,11 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             }
             let resp = ui.add(spinner);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
         Element::Divider(DividerEl { .. }) => {
-            let resp = ui.separator();
-
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            // 리셋 후에는 선언한 테두리만 보인다 (예전에는 egui 기본 separator)
+            drawn = Drawn::from(decorate(divider(ui, &style, palette), &style));
         }
         Element::Progress(ProgressEl { value, .. }) => {
             let mut bar = egui::ProgressBar::new(*value as f32);
@@ -488,7 +860,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             }
             let resp = ui.add(bar);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
         Element::Col(ColEl {
             children, on_click, ..
@@ -533,7 +905,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             // `padding`을 egui의 버튼 내부 여백으로 옮긴다 (0.7.4 — 버그 12).
             let resp = with_button_padding(ui, &style, |ui| ui.add_enabled(!disabled, button));
 
-            let resp = decorate(ui, resp, &style);
+            let resp = decorate(resp, &style);
             if resp.clicked() {
                 if let Some(h) = on_click {
                     h(arena);
@@ -567,7 +939,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                 button = button.stroke(egui::Stroke::new(width, color32(c)));
             }
             let resp = with_button_padding(ui, &style, |ui| ui.add(button));
-            let resp = decorate(ui, resp, &style);
+            let resp = decorate(resp, &style);
             if resp.clicked() {
                 if let Some(h) = on_click {
                     h(arena);
@@ -586,7 +958,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             }
             let resp = ui.add(button);
 
-            let resp = decorate(ui, resp, &style);
+            let resp = decorate(resp, &style);
             if resp.clicked() {
                 if let Some(h) = on_click {
                     h(arena);
@@ -598,7 +970,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
         Element::Td(TdEl { text, .. }) => {
             let resp = text_widget(ui, text, &style, false);
 
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            drawn = Drawn::from(decorate(resp, &style));
         }
 
         Element::Input(InputEl {
@@ -608,7 +980,23 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             ..
         }) => {
             let mut v = value.clone();
-            let resp = ui.text_edit_singleline(&mut v);
+            // 리셋 이후 입력도 `Frame` + 크기 선언을 따른다 —
+            // `bg`/`border-*`/`radius`/`padding`/`width`가 (드디어) 먹는다.
+            let outer = frame_of(&style, palette).show(ui, |ui| {
+                apply_size(ui, &style, walk.main_budget);
+                let mut te = egui::TextEdit::singleline(&mut v)
+                    .margin(egui::Margin::ZERO) // egui 기본 여백도 리셋
+                    .text_color(text_color(&style, palette));
+                let wanted = match style.width {
+                    Some(Len::Px(v)) => v,
+                    _ => ui.available_width(),
+                };
+                if wanted.is_finite() {
+                    te = te.desired_width(wanted);
+                }
+                ui.add(te)
+            });
+            let resp = outer.inner;
             if resp.changed() {
                 if let Some(h) = on_change {
                     h(arena, v.clone());
@@ -619,7 +1007,12 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                     h(arena, v);
                 }
             }
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            let rect = outer.response.rect;
+            decorate(outer.response, &style);
+            drawn = Drawn {
+                rect,
+                focused: resp.has_focus(),
+            };
         }
         Element::TextArea(TextAreaEl {
             value,
@@ -628,7 +1021,21 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
             ..
         }) => {
             let mut v = value.clone();
-            let resp = ui.text_edit_multiline(&mut v);
+            let outer = frame_of(&style, palette).show(ui, |ui| {
+                apply_size(ui, &style, walk.main_budget);
+                let mut te = egui::TextEdit::multiline(&mut v)
+                    .margin(egui::Margin::ZERO)
+                    .text_color(text_color(&style, palette));
+                let wanted = match style.width {
+                    Some(Len::Px(v)) => v,
+                    _ => ui.available_width(),
+                };
+                if wanted.is_finite() {
+                    te = te.desired_width(wanted);
+                }
+                ui.add(te)
+            });
+            let resp = outer.inner;
             if resp.changed() {
                 if let Some(h) = on_change {
                     h(arena, v.clone());
@@ -639,7 +1046,12 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                     h(arena, v);
                 }
             }
-            drawn = Drawn::from(decorate(ui, resp, &style));
+            let rect = outer.response.rect;
+            decorate(outer.response, &style);
+            drawn = Drawn {
+                rect,
+                focused: resp.has_focus(),
+            };
         }
         Element::Check(CheckEl {
             checked,
@@ -654,7 +1066,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                     h(arena, value);
                 }
             }
-            let resp = decorate(ui, resp, &style);
+            let resp = decorate(resp, &style);
             drawn = Drawn::of(&resp);
             walk.pass.checks.push((label.clone(), resp));
         }
@@ -674,7 +1086,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
                 .frame(frame_of(&style, palette))
                 .open(&mut open)
                 .show(ui.ctx(), |ui| {
-                    apply_size(ui, &style);
+                    apply_size(ui, &style, None);
                     for c in children {
                         render_el(walk, ui, c, arena);
                     }
@@ -697,9 +1109,7 @@ fn render_el<'a>(walk: &mut Walk<'a>, ui: &mut egui::Ui, el: &'a Element, arena:
         }
     }
 
-    walk.inherited.pop();
-    walk.ancestors.remove(0);
-    write_state(ui.ctx(), id, drawn.rect, drawn.focused);
+    drawn
 }
 
 /// `Col`/`Row` 공통 — `Frame` + 간격 + 레이아웃 + 클릭.
@@ -713,6 +1123,7 @@ fn container<'a>(
     on_click: Option<&dyn Fn(&mut Arena)>,
 ) -> Drawn {
     let palette = walk.palette;
+    let horizontal = !vertical;
     let gap = if vertical {
         style.row_gap()
     } else {
@@ -726,10 +1137,39 @@ fn container<'a>(
                 ui.spacing_mut().item_spacing.x = gap;
             }
         }
-        apply_size(ui, style);
+        apply_size(ui, style, walk.main_budget);
+        // 뒤 형제의 몫을 예약한 주축 예산 + 주축에 남는 공간(정렬용)
+        let (budgets, extra) = child_budgets(walk, ui, children, horizontal, gap.unwrap_or(0.0));
         ui.with_layout(layout_of(style, vertical), |ui| {
-            for child in children {
+            // `justify: center/end` — 남는 공간을 **앞에** 넣는다.
+            // (egui의 `Layout::main_align`은 자식 배치에 쓰이지 않아 0.7.4에는 무효였다.)
+            let lead = match style.justify {
+                Some(StyleAlign::Center) => extra / 2.0,
+                Some(StyleAlign::End) => extra,
+                _ => 0.0,
+            };
+            // egui는 앞 여백 **뒤에** item_spacing(선언한 gap)을 한 번 더 넣는다.
+            // 고정 오프셋을 그대로 쓰면 실제 위치가 gap만큼 밀리므로(실측 200→204)
+            // 프레임워크가 더한 변화량을 빼서 보정한다.
+            let spacing = if horizontal {
+                ui.spacing().item_spacing.x
+            } else {
+                ui.spacing().item_spacing.y
+            };
+            let lead = (lead - spacing).max(0.0);
+            if lead > 0.0 {
+                let space = if horizontal {
+                    egui::vec2(lead, 0.0)
+                } else {
+                    egui::vec2(0.0, lead)
+                };
+                ui.allocate_space(space);
+            }
+            for (child, budget) in children.iter().zip(budgets) {
+                let saved = walk.main_budget;
+                walk.main_budget = budget;
                 render_el(walk, ui, child, arena);
+                walk.main_budget = saved;
             }
         });
     });
@@ -740,4 +1180,43 @@ fn container<'a>(
         }
     }
     Drawn::from(inner.response)
+}
+
+/// 구분선 — 리셋 이후에는 **선언한 테두리만** 그린다(`border-width`/`border-color`).
+///
+/// 리셋 전에는 egui 기본 separator 스타일이 있었고, `border-*`를 선언해도 그대로였다.
+/// `border-width`가 없으면 두께 0이라 아무 자리도 차지하지 않는다.
+fn divider(ui: &mut egui::Ui, style: &ResolvedStyle, palette: &Palette) -> egui::Response {
+    let thickness = style.border_width.unwrap_or(0.0).max(0.0);
+    let color = color32(
+        style
+            .border_color
+            .unwrap_or_else(|| palette.get(Token::Border)),
+    );
+    let horizontal = ui.layout().main_dir().is_horizontal();
+    let cross = if horizontal {
+        ui.available_height()
+    } else {
+        ui.available_width()
+    };
+    let cross = if cross.is_finite() {
+        cross.max(0.0)
+    } else {
+        0.0
+    };
+    let size = if horizontal {
+        egui::vec2(thickness, cross)
+    } else {
+        egui::vec2(cross, thickness)
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    if thickness > 0.0 {
+        let stroke = egui::Stroke::new(thickness, color);
+        if horizontal {
+            ui.painter().vline(rect.center().x, rect.y_range(), stroke);
+        } else {
+            ui.painter().hline(rect.x_range(), rect.center().y, stroke);
+        }
+    }
+    resp
 }

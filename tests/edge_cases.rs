@@ -237,6 +237,50 @@ fn huge_tick_intervals_are_accepted_and_do_not_fire_early() {
 // 참고: `on_tick(0ms)`는 주기가 0이라 `advance()`가 끝나지 않을 수 있어 자동 테스트로
 // 두지 않는다 (수동 확인용). 사양서에 최소 주기 규칙이 없다.
 
+// ── 파싱 불가한 시간 리터럴 — 결함 후보 ─────────────────────
+//
+// `u64`를 넘는 리터럴이 **컴파일 에러도, 런타임 에러도 아니고 0ms**가 된다.
+// `on_change … after`에서는 지연이 사라지고, 같은 경로가 `on_tick`이면 0ms 주기가 되어
+// `advance()`가 끝나지 않을 수 있다. 그래서 여기서는 안전한 `on_change`로 관측한다.
+
+elm_magic::view! {
+    fn EdgeTooBigDuration(query = String::new(), fired = String::new()) {
+        // 2^64 — u64에 들어가지 않는다
+        on_change(query) after 18446744073709551616ms { fired = query.clone() }
+        <Col>
+            <Input value={query.clone()} on_change={query = _} />
+            "fired: {fired}"
+        </Col>
+    }
+}
+
+elm_magic::view! {
+    fn EdgeFitDuration(query = String::new(), fired = String::new()) {
+        // 2^32 — u64에 들어간다 (대조군)
+        on_change(query) after 4294967296ms { fired = query.clone() }
+        <Col>
+            <Input value={query.clone()} on_change={query = _} />
+            "fired: {fired}"
+        </Col>
+    }
+}
+
+#[test]
+fn unparseable_duration_literal_silently_becomes_zero() {
+    // 현재 의미론(실측) — **결함 후보**: 컴파일 에러가 아니라 0ms로 떨어져,
+    // 클럭을 진행하지 않아도 즉시 발화한다 (= 지연이 조용히 사라진다).
+    // 사양서 6.1/README의 "잘못된 값은 컴파일 에러" 계약과 어긋나므로,
+    // 리터럴 검증이 붙으면 이 테스트를 뒤집는다.
+    let mut app = elm_magic::mount!(EdgeTooBigDuration);
+    app.type_("x");
+    app.assert_text("fired: x");
+
+    // 대조군: u64 안에 들어가는 값은 지연이 살아 있다
+    let mut control = elm_magic::mount!(EdgeFitDuration);
+    control.type_("x");
+    control.assert_hidden("fired: x");
+}
+
 // ── 정수 오버플로 (빌드 프로파일에 따라 의미가 다르다) ──────
 
 elm_magic::view! {

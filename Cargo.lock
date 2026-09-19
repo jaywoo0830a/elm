@@ -1581,7 +1581,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elm-magic"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "elm-magic-macros",
  "enum_dispatch",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-egui"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "egui",
  "elm-magic",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-gpui"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "elm-magic",
  "gpui-kit",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-macros"
-version = "0.7.4"
+version = "0.7.5"
 
 [[package]]
 name = "emath"

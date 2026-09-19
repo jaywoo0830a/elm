@@ -334,3 +334,28 @@ fn ignored_attributes_do_not_reach_the_tree() {
         assert!(!tree.contains(leak), "{leak}가 트리에 나타났다:\n{tree}");
     }
 }
+
+// ── 문서와 실제가 다른 지점: `class`가 어디서 무시되는가 ────
+
+elm_magic::css! {
+    .mx_cls { gap: 5; }
+}
+
+#[test]
+fn class_on_input_and_textarea_is_stored_and_resolved() {
+    // 현황 문서 2.9는 "`class` on `Input` / `TextArea` / `Raw` is ignored"라고 적고
+    // 있지만, 실측으로는 **매크로가 저장하고 코어가 해석한다**(`class()` /
+    // `resolved_style()`). 무시되는 지점은 **어댑터가 그 스타일을 위젯에 입히지 않는
+    // 것**이므로, 원인 위치가 문서와 다르다 (core ↔ adapter 드리프트).
+    // 참고: `<Raw class="…">`는 아예 **컴파일 에러**다 (Raw는 클로저 자식만 받는다).
+    let input = elm_magic::ui! { <Input class="mx_cls" /> };
+    assert_eq!(input.class().to_vec(), ["mx_cls"]);
+    assert_eq!(
+        input.resolved_style(&elm_magic::style::Palette::dark()).gap,
+        Some(5.0),
+        "코어는 클래스를 해석한다"
+    );
+
+    let area = elm_magic::ui! { <TextArea class="mx_cls" /> };
+    assert_eq!(area.class().to_vec(), ["mx_cls"]);
+}
