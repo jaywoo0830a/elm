@@ -38,6 +38,37 @@ fn counter_increments() {
 }
 ```
 
+## 조건/반복 (0.8 개발 중)
+
+0.8.0은 화면 본문의 조건/반복을 태그로 쓴다 — 레이아웃 노드를 만들지 않는다.
+
+```rust
+elm_magic::view! {
+    fn TodoList(items: Vec<Todo> = vec![], filter: Filter = Filter::All) {
+        <Col>
+            <If when={items.is_empty()}>
+                <Text class="muted">"항목 없음"</Text>
+            </If>
+            <For each={items} as={t} key={t.id}>
+                <Row>"{t.text}"</Row>
+            </For>
+            <Switch on={filter}>
+                <Case when={Filter::All}><Text>"전체"</Text></Case>
+                <Case when={Filter::Active}><Text>"진행"</Text></Case>
+                <Default><Text>"완료"</Text></Default>
+            </Switch>
+            <>
+                <Text>"a"</Text>
+                <Text>"b"</Text>
+            </>
+        </Col>
+    }
+}
+```
+
+기존 `{if …}` / `{items.map(…)}` 문법은 그대로 동작한다. 계약 테스트는
+`tests/0.8/`(`cargo test --test v0_8_if_else` 등)에 있다.
+
 ## 스타일 — `css!`
 
 ```rust

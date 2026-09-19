@@ -861,7 +861,7 @@ fn transform_children(toks: &[TokenTree], env: &Env, sep: char) -> TokenStream {
                 continue;
             }
             TokenTree::Punct(p) if p.as_char() == '<' => {
-                if let Some(TokenTree::Ident(_)) = toks.get(i + 1) {
+                if is_tag_start(toks, i) {
                     let (el, next) = parse_element(toks, i, env);
                     pieces.push((el, false));
                     i = next;
@@ -992,7 +992,7 @@ fn transform_render_inner(toks: &[TokenTree], env: &Env, lit_text: bool) -> Toke
         }
         if let TokenTree::Punct(p) = &toks[i] {
             if p.as_char() == '<' && !prev_colon {
-                if let Some(TokenTree::Ident(_)) = toks.get(i + 1) {
+                if is_tag_start(toks, i) {
                     let (el, next) = parse_element(toks, i, env);
                     out.extend(el);
                     i = next;
@@ -1796,8 +1796,364 @@ fn open_tag_is_self_closing(toks: &[TokenTree], i: usize) -> bool {
     false
 }
 
+// ── 0.8 제어 흐름 태그 (`<If>`/`<For>`/`<Switch>` + `<>`) ──────
+
+/// 0.8 제어 흐름 태그 — 레이아웃 노드를 만들지 않는다.
+fn is_control_tag(tag: &str) -> bool {
+    matches!(tag, "If" | "Else" | "For" | "Switch" | "Case" | "Default")
+}
+
+/// `<` 뒤에 태그가 시작하는가? — `<>`(프래그먼트)도 포함한다.
+fn is_tag_start(toks: &[TokenTree], i: usize) -> bool {
+    matches!(toks.get(i + 1), Some(TokenTree::Ident(_)))
+        || matches!(toks.get(i + 1), Some(TokenTree::Punct(q)) if q.as_char() == '>')
+}
+
+/// `children_start`(여는 `>` 다음)부터 `</tag>`까지의 자식을 모은다.
+/// 같은 태그의 중첩 열림은 depth로 센다.
+fn scan_tag_children(
+    toks: &[TokenTree],
+    children_start: usize,
+    tag: &str,
+) -> (Vec<TokenTree>, usize) {
+    let mut depth = 0usize;
+    let mut j = children_start;
+    while j < toks.len() {
+        if let TokenTree::Punct(p) = &toks[j] {
+            if p.as_char() == '<' {
+                if matches!(toks.get(j + 1), Some(TokenTree::Punct(pp)) if pp.as_char() == '/') {
+                    // `</>` — 프래그먼트 닫기 (3토큰)
+                    if matches!(toks.get(j + 2), Some(TokenTree::Punct(gt)) if gt.as_char() == '>')
+                    {
+                        j += 3;
+                        continue;
+                    }
+                    // `</Tag>` (4토큰)
+                    if let (Some(TokenTree::Ident(id)), Some(TokenTree::Punct(gt))) =
+                        (toks.get(j + 2), toks.get(j + 3))
+                    {
+                        if id.to_string() == tag && gt.as_char() == '>' {
+                            if depth == 0 {
+                                return (toks[children_start..j].to_vec(), j + 4);
+                            }
+                            depth -= 1;
+                        }
+                        j += 4;
+                        continue;
+                    }
+                    j += 1;
+                    continue;
+                }
+                if matches!(toks.get(j + 1), Some(TokenTree::Ident(id2)) if id2.to_string() == tag)
+                    && !open_tag_is_self_closing(toks, j)
+                {
+                    depth += 1;
+                }
+            }
+        }
+        j += 1;
+    }
+    panic!("elm-magic: unclosed tag `<{}>`", tag);
+}
+
+/// `<Name ...>` 블록 하나: (이름, 자식, 닫는 태그 뒤, 여는 `>` 인덱스).
+fn scan_named_block(
+    toks: &[TokenTree],
+    at: usize,
+) -> Option<(String, Vec<TokenTree>, usize, usize)> {
+    let name = match toks.get(at + 1) {
+        Some(TokenTree::Ident(id)) => id.to_string(),
+        _ => return None,
+    };
+    let mut i = at + 2;
+    let mut self_closing = false;
+    let open_end;
+    loop {
+        match toks.get(i) {
+            Some(TokenTree::Punct(p)) if p.as_char() == '/' => {
+                self_closing = true;
+                i += 2;
+                open_end = i;
+                break;
+            }
+            Some(TokenTree::Punct(p)) if p.as_char() == '>' => {
+                open_end = i;
+                i += 1;
+                break;
+            }
+            Some(_) => i += 1,
+            None => return None,
+        }
+    }
+    if self_closing {
+        return Some((name, Vec::new(), i, open_end));
+    }
+    let (children, next) = scan_tag_children(toks, i, &name);
+    Some((name, children, next, open_end))
+}
+
+/// 여는 태그 구간에서 `key={group}`의 그룹 토큰을 꺼낸다 (Case 패턴용).
+fn find_attr_group(toks: &[TokenTree], from: usize, to: usize, key: &str) -> Option<TokenStream> {
+    let mut i = from;
+    while i + 2 < to {
+        if let TokenTree::Ident(id) = &toks[i] {
+            if id.to_string() == key
+                && matches!(toks.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '=')
+            {
+                if let Some(TokenTree::Group(g)) = toks.get(i + 2) {
+                    if g.delimiter() == Delimiter::Brace {
+                        return Some(g.stream());
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `as={t}`처럼 값이 식별자 하나인 속성.
+fn attr_ident(attrs: &[(String, AttrVal)], key: &str) -> Option<String> {
+    attrs.iter().find_map(|(k, v)| {
+        if k != key {
+            return None;
+        }
+        match v {
+            AttrVal::Expr(e) => {
+                let s = e.to_string();
+                let s = s.trim();
+                if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    Some(s.to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    })
+}
+
+/// 원문 토큰을 그대로 담은 속성 값 (`when` — `<If>`에서는 식, `<Case>`에서는 패턴).
+fn attr_tokens(attrs: &[(String, AttrVal)], key: &str) -> Option<TokenStream> {
+    attrs.iter().find_map(|(k, v)| match (k, v) {
+        (k, AttrVal::Expr(e)) if k == key => Some(e.clone()),
+        (k, AttrVal::Lit(s)) if k == key => Some(parse_ts(&format!("{:?}", s))),
+        _ => None,
+    })
+}
+
+/// `<> … </>` — 레이아웃 없는 프래그먼트.
+fn parse_fragment(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, usize) {
+    let (children, next) = scan_fragment_children(toks, start + 2);
+    (transform_children(&children, env, ','), next)
+}
+
+fn scan_fragment_children(toks: &[TokenTree], children_start: usize) -> (Vec<TokenTree>, usize) {
+    let mut depth = 0usize;
+    let mut j = children_start;
+    while j < toks.len() {
+        if let TokenTree::Punct(p) = &toks[j] {
+            if p.as_char() == '<' {
+                if matches!(toks.get(j + 1), Some(TokenTree::Punct(pp)) if pp.as_char() == '/') {
+                    // `</>` (3토큰)
+                    if matches!(toks.get(j + 2), Some(TokenTree::Punct(gt)) if gt.as_char() == '>')
+                    {
+                        if depth == 0 {
+                            return (toks[children_start..j].to_vec(), j + 3);
+                        }
+                        depth -= 1;
+                        j += 3;
+                        continue;
+                    }
+                    // `</Tag>` (4토큰)
+                    if matches!(toks.get(j + 3), Some(TokenTree::Punct(gt)) if gt.as_char() == '>')
+                    {
+                        j += 4;
+                        continue;
+                    }
+                    j += 1;
+                    continue;
+                }
+                if matches!(toks.get(j + 1), Some(TokenTree::Punct(gt)) if gt.as_char() == '>') {
+                    depth += 1;
+                }
+            }
+        }
+        j += 1;
+    }
+    panic!("elm-magic: unclosed fragment `<>`");
+}
+
+/// `<If>`/`<For>`/`<Switch>` 전개 — 모두 `Vec<Element>`를 낸다 (레이아웃 노드 없음).
+fn emit_control(
+    tag: &str,
+    attrs: &[(String, AttrVal)],
+    children: &[TokenTree],
+    env: &Env,
+) -> TokenStream {
+    match tag {
+        "If" => emit_if(attrs, children, env),
+        "For" => emit_for(attrs, children, env),
+        "Switch" => emit_switch(attrs, children, env),
+        other => panic!(
+            "elm-magic: `<{}>`는 `<If>`/`<Switch>` 안에서만 쓸 수 있습니다",
+            other
+        ),
+    }
+}
+
+/// 중첩 블록(`<Tag>…</Tag>` 또는 `<>…</>`)의 **닫는 태그 뒤** 인덱스.
+fn nested_block_end(toks: &[TokenTree], i: usize) -> Option<usize> {
+    if matches!(toks.get(i + 1), Some(TokenTree::Punct(q)) if q.as_char() == '>') {
+        let (_, next) = scan_fragment_children(toks, i + 2);
+        return Some(next);
+    }
+    if matches!(toks.get(i + 1), Some(TokenTree::Ident(_))) {
+        let (_, _, next, _) = scan_named_block(toks, i)?;
+        return Some(next);
+    }
+    None
+}
+
+/// `<If when={..}> … <Else> … </Else> </If>` → 조건부 `Vec<Element>`.
+fn emit_if(attrs: &[(String, AttrVal)], children: &[TokenTree], env: &Env) -> TokenStream {
+    let cond = match attr_tokens(attrs, "when") {
+        Some(ts) => {
+            let toks: Vec<TokenTree> = ts.into_iter().collect();
+            transform_render(&toks, env).to_string()
+        }
+        None => panic!("elm-magic: `<If>` needs `when={{condition}}`"),
+    };
+    let mut then_toks: Vec<TokenTree> = Vec::new();
+    let mut else_toks: Option<Vec<TokenTree>> = None;
+    let mut i = 0;
+    while i < children.len() {
+        let is_else = matches!(&children[i], TokenTree::Punct(p) if p.as_char() == '<')
+            && matches!(children.get(i + 1), Some(TokenTree::Ident(id)) if id.to_string() == "Else");
+        if is_else {
+            let (_, body, next, _) =
+                scan_named_block(children, i).unwrap_or_else(|| panic!("elm-magic: bad `<Else>`"));
+            else_toks = Some(body);
+            i = next;
+            if i < children.len() {
+                panic!("elm-magic: `<Else>` must be the last child of `<If>`");
+            }
+            break;
+        }
+        // 중첩 태그 블록은 통째로 건너뛴다 — 안쪽 `<Else>`를 바깥 것으로 오인하지 않게.
+        if matches!(&children[i], TokenTree::Punct(p) if p.as_char() == '<') {
+            if let Some(next) = nested_block_end(children, i) {
+                then_toks.extend(children[i..next].iter().cloned());
+                i = next;
+                continue;
+            }
+        }
+        then_toks.push(children[i].clone());
+        i += 1;
+    }
+    let then_src = transform_children(&then_toks, env, ',');
+    let else_src = match else_toks {
+        Some(body) => transform_children(&body, env, ','),
+        None => parse_ts("::std::vec::Vec::<::elm_magic::Element>::new()"),
+    };
+    parse_ts(&format!(
+        "{{ if {cond} {{ {then_src} }} else {{ {else_src} }} }}",
+        cond = cond,
+        then_src = then_src,
+        else_src = else_src
+    ))
+}
+
+/// `<For each={..} as={item} key={..}> … </For>` → 반복 `Vec<Element>`.
+fn emit_for(attrs: &[(String, AttrVal)], children: &[TokenTree], env: &Env) -> TokenStream {
+    let each = attr_expr(attrs, "each")
+        .unwrap_or_else(|| panic!("elm-magic: `<For>` needs `each={{..}}`"));
+    let binding =
+        attr_ident(attrs, "as").unwrap_or_else(|| panic!("elm-magic: `<For>` needs `as={{item}}`"));
+    let key = attr_expr(attrs, "key");
+    let body = transform_children(children, env, ',');
+    let mut loop_body = String::new();
+    if let Some(k) = &key {
+        loop_body.push_str(&format!(
+            "__elm_ctx.enter_key(::elm_magic::key_of(&({}))); ",
+            k
+        ));
+    }
+    loop_body.push_str(&format!(
+        "__elm_children.extend(::elm_magic::IntoElements::into_elements({})); ",
+        body
+    ));
+    if key.is_some() {
+        loop_body.push_str("__elm_ctx.exit_key(); ");
+    }
+    parse_ts(&format!(
+        "{{ let mut __elm_children = ::std::vec::Vec::<::elm_magic::Element>::new(); \
+         for {b} in {each} {{ {body} }} __elm_children }}",
+        b = binding,
+        each = each,
+        body = loop_body
+    ))
+}
+
+/// `<Switch on={..}><Case when={pattern}>…</Case><Default>…</Default></Switch>`.
+fn emit_switch(attrs: &[(String, AttrVal)], children: &[TokenTree], env: &Env) -> TokenStream {
+    let on =
+        attr_expr(attrs, "on").unwrap_or_else(|| panic!("elm-magic: `<Switch>` needs `on={{..}}`"));
+    let mut arms: Vec<String> = Vec::new();
+    let mut default: Option<Vec<TokenTree>> = None;
+    let mut i = 0;
+    while i < children.len() {
+        if !matches!(&children[i], TokenTree::Punct(p) if p.as_char() == '<') {
+            panic!("elm-magic: `<Switch>` children must be `<Case>`/`<Default>`");
+        }
+        let (name, body, next, open_end) = scan_named_block(children, i)
+            .unwrap_or_else(|| panic!("elm-magic: bad `<Case>`/`<Default>` in `<Switch>`"));
+        match name.as_str() {
+            "Case" => {
+                let pat = find_attr_group(children, i + 2, open_end, "when")
+                    .unwrap_or_else(|| panic!("elm-magic: `<Case>` needs `when={{pattern}}`"));
+                arms.push(format!(
+                    "{} => ::elm_magic::IntoElements::into_elements({})",
+                    pat,
+                    transform_children(&body, env, ',')
+                ));
+            }
+            "Default" => {
+                if default.is_some() {
+                    panic!("elm-magic: `<Switch>` may have only one `<Default>`");
+                }
+                default = Some(body);
+            }
+            other => panic!(
+                "elm-magic: `<Switch>` children must be `<Case>`/`<Default>`, found `<{}>`",
+                other
+            ),
+        }
+        i = next;
+    }
+    if arms.is_empty() {
+        return match default {
+            Some(body) => transform_children(&body, env, ','),
+            None => parse_ts("::std::vec::Vec::<::elm_magic::Element>::new()"),
+        };
+    }
+    let default_arm = match default {
+        Some(body) => format!(
+            "_ => ::elm_magic::IntoElements::into_elements({})",
+            transform_children(&body, env, ',')
+        ),
+        None => "_ => ::std::vec::Vec::<::elm_magic::Element>::new()".to_string(),
+    };
+    arms.push(default_arm);
+    parse_ts(&format!("{{ match {} {{ {} }} }}", on, arms.join(", ")))
+}
+
 /// Parse `<Tag attrs> children </Tag>` or `<Tag attrs />` at toks[i] == `<`.
 fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, usize) {
+    // `<> children </>` — 레이아웃 없는 프래그먼트 (0.8, 사양서 §3.1).
+    if matches!(toks.get(start + 1), Some(TokenTree::Punct(p)) if p.as_char() == '>') {
+        return parse_fragment(toks, start, env);
+    }
     let tag = match &toks[start + 1] {
         TokenTree::Ident(id) => id.to_string(),
         _ => panic!("elm-magic: expected tag name after `<`"),
@@ -1860,6 +2216,10 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
                             };
                             let expr = if is_event {
                                 transform_event(&inner, env, value_binding, Level::Stmt)
+                            } else if key == "as" || key == "when" {
+                                // `<For as={t}>` / `<If when={..}>` 값은 **원문 보존**:
+                                // `as`는 바인딩 이름이고, `when`은 `<Case>`에서 패턴이 된다.
+                                TokenStream::from_iter(inner)
                             } else {
                                 transform_render(&inner, env)
                             };
@@ -1887,41 +2247,17 @@ fn parse_element(toks: &[TokenTree], start: usize, env: &Env) -> (TokenStream, u
     }
 
     if self_closing {
+        if is_control_tag(&tag) {
+            panic!("elm-magic: `<{}>` needs a closing tag", tag);
+        }
         return (emit_element(&tag, &attrs, None, env), i);
     }
 
-    // scan children until `</ Tag >`, tracking nested same-tag opens
-    let children_start = i;
-    let mut depth = 0usize;
-    let mut j = i;
-    while j < toks.len() {
-        if let TokenTree::Punct(p) = &toks[j] {
-            if p.as_char() == '<' {
-                if matches!(toks.get(j + 1), Some(TokenTree::Punct(pp)) if pp.as_char() == '/') {
-                    if let (Some(TokenTree::Ident(id)), Some(TokenTree::Punct(gt))) =
-                        (toks.get(j + 2), toks.get(j + 3))
-                    {
-                        if id.to_string() == tag && gt.as_char() == '>' {
-                            if depth == 0 {
-                                let children: Vec<TokenTree> = toks[children_start..j].to_vec();
-                                return (emit_element(&tag, &attrs, Some(&children), env), j + 4);
-                            }
-                            depth -= 1;
-                        }
-                    }
-                    j += 4;
-                    continue;
-                }
-                if matches!(toks.get(j + 1), Some(TokenTree::Ident(id2)) if id2.to_string() == tag)
-                    && !open_tag_is_self_closing(toks, j)
-                {
-                    depth += 1;
-                }
-            }
-        }
-        j += 1;
+    let (children, next) = scan_tag_children(toks, i, &tag);
+    if is_control_tag(&tag) {
+        return (emit_control(&tag, &attrs, &children, env), next);
     }
-    panic!("elm-magic: unclosed tag `<{}>`", tag);
+    (emit_element(&tag, &attrs, Some(&children), env), next)
 }
 
 // ── element code emission ───────────────────────────────────
@@ -2263,6 +2599,12 @@ fn is_builtin_tag(tag: &str) -> bool {
             | "Progress"
             | "Modal"
             | "Raw"
+            | "If"
+            | "Else"
+            | "For"
+            | "Switch"
+            | "Case"
+            | "Default"
     )
 }
 

@@ -44,6 +44,34 @@ trybuild = "1"
 proptest = "1"
 insta = { version = "1", features = ["json"] }
 
+# ── 0.8.0 조건/반복 TDD 계약 (tests/0.8/) ──────────────────────
+#
+# 디렉터리 이름이 `0.8`이라 Rust 크레이트 이름으로 쓸 수 없다. 그래서 각 파일을
+# `[[test]]`로 **명시 등록**하고 target 이름만 `v0_8_*`로 둔다. (디렉터리에
+# `main.rs`가 없으면 Cargo의 자동 타겟 탐색은 이 파일들을 건드리지 않는다.)
+#
+# 구현 전이므로 지금은 컴파일 실패(red)다 — 매크로가 `<If>`/`<For>`/`<Switch>`/`<>`를
+# 이해하면 green이 된다. 자세한 계약은 `tests/0.8/README.md` 참고.
+[[test]]
+name = "v0_8_if_else"
+path = "tests/0.8/if_else.rs"
+
+[[test]]
+name = "v0_8_for_loop"
+path = "tests/0.8/for_loop.rs"
+
+[[test]]
+name = "v0_8_switch"
+path = "tests/0.8/switch.rs"
+
+[[test]]
+name = "v0_8_fragment"
+path = "tests/0.8/fragment.rs"
+
+[[test]]
+name = "v0_8_interop"
+path = "tests/0.8/interop.rs"
+
 [package.metadata.docs.rs]
 # 선택 기능(`serde`)까지 문서화한다 — `Element: Serialize`가 docs.rs에 보이도록.
 all-features = true
